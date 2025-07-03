@@ -1,8 +1,10 @@
 package com.hippo.ehviewer.ui.reader
 
+import android.graphics.drawable.Animatable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,12 +17,16 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onVisibilityChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -40,8 +46,10 @@ import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.progressObserved
 import com.hippo.ehviewer.gallery.statusObserved
 import com.hippo.ehviewer.image.Image
+import com.hippo.ehviewer.ui.tools.thenIf
 import com.hippo.ehviewer.util.AdsPlaceholderFile
 import eu.kanade.tachiyomi.ui.reader.viewer.CombinedCircularProgressIndicator
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.drop
 import moe.tarsin.kt.unreachable
 
@@ -55,6 +63,7 @@ fun PagerItem(
 ) {
     LaunchedEffect(Unit) {
         pageLoader.request(page.index)
+        // In case page loader restart
         page.statusFlow.drop(1).collect {
             if (page.statusFlow.value == PageStatus.Queued) {
                 pageLoader.request(page.index)
@@ -78,32 +87,41 @@ fun PagerItem(
         }
         is PageStatus.Ready -> {
             val image = state.image
-            val painter = remember(image) { image.toPainter() }
-            val grayScale by Settings.grayScale.collectAsState()
-            val invert by Settings.invertedColors.collectAsState()
-            DisposableEffect(image) {
-                image.isRecyclable = false
-                onDispose {
-                    if (image.isRecyclable) {
-                        pageLoader.notifyPageWait(page.index)
-                        image.recycle()
-                    } else {
-                        image.isRecyclable = true
+            var painter by remember { mutableStateOf<Painter?>(null) }
+            LaunchedEffect(image) {
+                if (image.pin()) {
+                    painter = image.toPainter()
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        if (image.unpin()) {
+                            pageLoader.notifyPageWait(page.index)
+                        }
                     }
                 }
             }
-            Image(
-                painter = painter,
-                contentDescription = null,
-                modifier = contentModifier.fillMaxSize(),
-                contentScale = contentScale,
-                colorFilter = when {
-                    grayScale && invert -> grayScaleAndInvertFilter
-                    grayScale -> grayScaleFilter
-                    invert -> invertFilter
-                    else -> null
-                },
-            )
+            painter?.let { painter ->
+                val drawable = (painter as? DrawablePainter)?.drawable
+                val grayScale by Settings.grayScale.collectAsState()
+                val invert by Settings.invertedColors.collectAsState()
+                Image(
+                    // DrawablePainter <: RememberObserver
+                    painter = remember(painter) { painter },
+                    contentDescription = null,
+                    modifier = contentModifier.fillMaxSize().thenIf(drawable is Animatable) {
+                        onVisibilityChanged(minDurationMs = 33, minFractionVisible = 0.5f) {
+                            drawable!!.setVisible(it, false)
+                        }
+                    },
+                    contentScale = contentScale,
+                    colorFilter = when {
+                        grayScale && invert -> grayScaleAndInvertFilter
+                        grayScale -> grayScaleFilter
+                        invert -> invertFilter
+                        else -> null
+                    },
+                )
+            } ?: Spacer(modifier = modifier.fillMaxWidth().aspectRatio(DEFAULT_ASPECT))
         }
         is PageStatus.Blocked -> {
             AdsPlaceholder(

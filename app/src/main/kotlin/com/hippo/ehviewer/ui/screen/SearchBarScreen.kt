@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
@@ -40,7 +41,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
-import androidx.compose.material3.SearchBarInputField
+import androidx.compose.material3.SearchBarDefaults.InputField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import com.hippo.ehviewer.EhApplication.Companion.searchDatabase
 import com.hippo.ehviewer.R
@@ -69,6 +71,7 @@ import com.hippo.ehviewer.dao.SearchDao
 import com.hippo.ehviewer.ui.LocalNavDrawerState
 import com.hippo.ehviewer.ui.destinations.ImageSearchScreenDestination
 import com.hippo.ehviewer.ui.tools.DialogState
+import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.ui.tools.rememberCompositionActiveState
 import com.hippo.ehviewer.ui.tools.thenIf
 import com.jamal.composeprefs3.ui.ifNotNullThen
@@ -82,6 +85,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import moe.tarsin.navigate
 
 fun interface SuggestionProvider {
     fun providerSuggestions(text: String): Suggestion?
@@ -97,7 +101,7 @@ abstract class Suggestion {
 
 suspend fun SearchDao.suggestions(prefix: String, limit: Int) = (if (prefix.isBlank()) list(limit) else rawSuggestions(prefix, limit))
 
-context(DialogState, DestinationsNavigator)
+context(_: DialogState, _: DestinationsNavigator)
 @Composable
 fun SearchBarScreen(
     onApplySearch: (String) -> Unit,
@@ -143,19 +147,17 @@ fun SearchBarScreen(
         }
     }
 
-    fun mergedSuggestionFlow(): Flow<Suggestion> = flow {
-        val query = searchFieldState.text.toString()
-        suggestionProvider?.run { providerSuggestions(query)?.let { emit(it) } }
-        mSearchDatabase.suggestions(query, 128).forEach { emit(KeywordSuggestion(it)) }
-        EhTagDatabase.takeIf { it.initialized }?.run {
+    fun mergedSuggestionFlow(): Flow<Suggestion> = with(context) {
+        flow {
+            val query = searchFieldState.text.toString()
+            suggestionProvider?.run { providerSuggestions(query)?.let { emit(it) } }
+            mSearchDatabase.suggestions(query, 128).forEach { emit(KeywordSuggestion(it)) }
             if (query.isNotEmpty() && !query.endsWith(' ')) {
-                val keyword = query.substringAfterLast(' ')
-                val translate = Settings.showTagTranslations && isTranslatable(context)
-                suggestFlow(keyword, translate, true).collect {
-                    emit(TagSuggestion(it.first, it.second))
-                }
-                suggestFlow(keyword, translate).collect {
-                    emit(TagSuggestion(it.first, it.second))
+                EhTagDatabase.suggestion(
+                    query.substringAfterLast(' '),
+                    Settings.showTagTranslations,
+                ).forEach { (tag, hint) ->
+                    emit(TagSuggestion(hint, tag))
                 }
             }
         }
@@ -217,7 +219,7 @@ fun SearchBarScreen(
             modifier = Modifier.align(Alignment.TopCenter).thenIf(!expanded) { offset { IntOffset(0, searchBarOffsetY()) } }
                 .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal)),
             inputField = {
-                SearchBarInputField(
+                InputField(
                     state = searchFieldState,
                     onSearch = {
                         hideSearchView()
@@ -225,7 +227,7 @@ fun SearchBarScreen(
                     },
                     expanded = expanded,
                     onExpandedChange = onExpandedChange,
-                    modifier = Modifier.widthIn(max = maxWidth - SearchBarHorizontalPadding * 2),
+                    modifier = Modifier.widthIn(max = (maxWidth - SearchBarHorizontalPadding * 2).coerceAtMost(M3SearchBarMaxWidth)).fillMaxWidth(),
                     placeholder = {
                         val contentActive by activeState.state
                         val text = title.takeUnless { expanded || contentActive } ?: searchFieldHint
@@ -321,3 +323,4 @@ fun wrapTagKeyword(keyword: String, translate: Boolean = false): String = if (ke
 
 private val WhitespaceRegex = Regex("\\s+")
 private val SearchBarHorizontalPadding = 16.dp
+private val M3SearchBarMaxWidth = 720.dp

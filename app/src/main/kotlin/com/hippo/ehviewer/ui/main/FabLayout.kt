@@ -36,14 +36,14 @@ import androidx.compose.ui.util.lerp
 import arrow.resilience.Schedule
 import arrow.resilience.retry
 import com.hippo.ehviewer.ui.tools.PredictiveBackEasing
-import com.hippo.ehviewer.ui.tools.delegateSnapshotUpdate
+import com.hippo.ehviewer.ui.tools.asyncState
 import com.hippo.ehviewer.ui.tools.snackBarPadding
 import kotlin.time.Duration.Companion.microseconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import moe.tarsin.coroutines.onEachLatest
+import moe.tarsin.launch
 
 @Stable
 enum class FabLayoutValue { Hidden, Primary, Expand }
@@ -98,7 +98,7 @@ fun interface FabBuilder {
     fun onClick(icon: ImageVector, that: suspend () -> Unit) = onClick(icon, true, that)
 }
 
-context(CoroutineScope)
+context(_: CoroutineScope)
 @Composable
 fun FabLayout(
     hidden: Boolean,
@@ -129,10 +129,10 @@ fun FabLayout(
     }
     val builder by rememberUpdatedState(fabBuilder)
 
-    val secondaryFab by delegateSnapshotUpdate {
-        record { buildFab(builder) }
-        transform { onEachLatest { state.collapse(MutatePriority.PreventUserInput) } }
-    }
+    val secondaryFab by asyncState(
+        produce = { buildFab(builder) },
+        transform = { onEachLatest { state.collapse(MutatePriority.PreventUserInput) } },
+    )
 
     val density = LocalDensity.current
     val interval = remember(density) { with(density) { FabInterval.roundToPx() } }

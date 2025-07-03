@@ -1,6 +1,7 @@
-import com.mikepenz.aboutlibraries.plugin.DuplicateMode.MERGE
-import com.mikepenz.aboutlibraries.plugin.DuplicateRule.GROUP
-import org.jetbrains.kotlin.compose.compiler.gradle.ComposeFeatureFlag
+import com.mikepenz.aboutlibraries.plugin.DuplicateMode
+import com.mikepenz.aboutlibraries.plugin.DuplicateRule
+import java.util.regex.Pattern
+import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 
 val isRelease: Boolean
     get() = gradle.startParameter.taskNames.any { it.contains("Release") }
@@ -9,7 +10,6 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.kotlin.parcelize)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.spotless)
@@ -21,24 +21,6 @@ plugins {
 val supportedAbis = arrayOf("arm64-v8a", "x86_64", "armeabi-v7a")
 
 android {
-    androidResources {
-        generateLocaleConfig = true
-        localeFilters += listOf(
-            "zh",
-            "zh-rCN",
-            "zh-rHK",
-            "zh-rTW",
-            "es",
-            "ja",
-            "ko",
-            "fr",
-            "de",
-            "th",
-            "tr",
-            "nb-rNO",
-        )
-    }
-
     splits {
         abi {
             isEnable = true
@@ -78,8 +60,8 @@ android {
 
     defaultConfig {
         applicationId = "moe.tarsin.ehviewer"
-        versionCode = 180060
-        versionName = "1.13.0"
+        versionCode = 180062
+        versionName = "1.14.0"
         versionNameSuffix = "-SNAPSHOT"
         buildConfigField("String", "RAW_VERSION_NAME", "\"$versionName${versionNameSuffix.orEmpty()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"$commitSha\"")
@@ -91,11 +73,6 @@ android {
                 abiFilters.addAll(supportedAbis)
             }
             debugSymbolLevel = "FULL"
-        }
-        externalNativeBuild {
-            cmake {
-                arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
-            }
         }
     }
 
@@ -139,10 +116,27 @@ android {
                 "/kotlin/**",
                 "**.txt",
                 "**.bin",
-                "**.{html,mmd}", // Compose Destination
-                "/okhttp3/**", // Okhttp public suffix
             )
         }
+    }
+
+    androidResources {
+        ignoreAssetsPatterns += "!PublicSuffixDatabase.list" // OkHttp
+        generateLocaleConfig = true
+        localeFilters += listOf(
+            "zh",
+            "zh-rCN",
+            "zh-rHK",
+            "zh-rTW",
+            "es",
+            "ja",
+            "ko",
+            "fr",
+            "de",
+            "th",
+            "tr",
+            "nb-rNO",
+        )
     }
 
     dependenciesInfo.includeInApk = false
@@ -174,10 +168,6 @@ android {
     namespace = "com.hippo.ehviewer"
 }
 
-composeCompiler {
-    featureFlags = setOf(ComposeFeatureFlag.OptimizeNonSkippingGroups)
-}
-
 baselineProfile {
     mergeIntoMain = true
 }
@@ -199,7 +189,6 @@ dependencies {
     implementation(libs.androidx.core)
     implementation(libs.androidx.core.splashscreen)
 
-    implementation(libs.androidx.constraintlayout.compose)
     implementation(libs.androidx.datastore)
     implementation(libs.androidx.graphics.path)
 
@@ -237,8 +226,7 @@ dependencies {
     implementation(libs.reorderable)
 
     implementation(platform(libs.arrow.stack))
-    implementation(libs.arrow.fx.coroutines)
-    implementation(libs.arrow.resilience)
+    implementation(libs.bundles.arrow)
 
     // https://coil-kt.github.io/coil/changelog/
     implementation(platform(libs.coil.bom))
@@ -252,7 +240,6 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.datetime)
-    implementation(libs.jsoup)
 
     coreLibraryDesugaring(libs.desugar)
 
@@ -265,31 +252,36 @@ dependencies {
 
 kotlin {
     jvmToolchain(21)
-    compilerOptions {
-        freeCompilerArgs = listOf(
-            // https://kotlinlang.org/docs/compiler-reference.html#progressive
-            "-progressive",
-            "-Xjvm-default=all",
-            "-Xcontext-receivers",
-            "-Xwhen-guards",
-            "-Xsuppress-warning=CONTEXT_RECEIVERS_DEPRECATED",
 
-            "-opt-in=coil3.annotation.ExperimentalCoilApi",
-            "-opt-in=androidx.compose.foundation.layout.ExperimentalLayoutApi",
-            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
-            "-opt-in=androidx.compose.material3.ExperimentalMaterial3ExpressiveApi",
-            "-opt-in=androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi",
-            "-opt-in=androidx.compose.ui.ExperimentalComposeUiApi",
-            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
-            "-opt-in=androidx.compose.animation.ExperimentalAnimationApi",
-            "-opt-in=androidx.compose.animation.ExperimentalSharedTransitionApi",
-            "-opt-in=androidx.paging.ExperimentalPagingApi",
-            "-opt-in=kotlin.contracts.ExperimentalContracts",
-            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
-            "-opt-in=kotlinx.coroutines.FlowPreview",
-            "-opt-in=kotlinx.serialization.ExperimentalSerializationApi",
-            "-opt-in=splitties.experimental.ExperimentalSplittiesApi",
-            "-opt-in=splitties.preferences.DataStorePreferencesPreview",
+    // https://kotlinlang.org/docs/gradle-compiler-options.html#all-compiler-options
+    compilerOptions {
+        jvmDefault = JvmDefaultMode.NO_COMPATIBILITY
+        progressiveMode = true
+        optIn.addAll(
+            "coil3.annotation.ExperimentalCoilApi",
+            "androidx.compose.foundation.layout.ExperimentalLayoutApi",
+            "androidx.compose.material3.ExperimentalMaterial3Api",
+            "androidx.compose.material3.ExperimentalMaterial3ExpressiveApi",
+            "androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi",
+            "androidx.compose.ui.ExperimentalComposeUiApi",
+            "androidx.compose.foundation.ExperimentalFoundationApi",
+            "androidx.compose.animation.ExperimentalAnimationApi",
+            "androidx.compose.animation.ExperimentalSharedTransitionApi",
+            "androidx.compose.runtime.ExperimentalComposeRuntimeApi",
+            "androidx.paging.ExperimentalPagingApi",
+            "kotlin.ExperimentalStdlibApi",
+            "kotlin.concurrent.atomics.ExperimentalAtomicApi",
+            "kotlin.contracts.ExperimentalContracts",
+            "kotlin.time.ExperimentalTime",
+            "kotlinx.coroutines.ExperimentalCoroutinesApi",
+            "kotlinx.coroutines.FlowPreview",
+            "kotlinx.serialization.ExperimentalSerializationApi",
+            "splitties.experimental.ExperimentalSplittiesApi",
+            "splitties.preferences.DataStorePreferencesPreview",
+        )
+        freeCompilerArgs.addAll(
+            "-Xcontext-parameters",
+            "-Xannotation-default-target=param-property",
         )
     }
 }
@@ -300,8 +292,14 @@ ksp {
 }
 
 aboutLibraries {
-    duplicationMode = MERGE
-    duplicationRule = GROUP
+    collect {
+        includePlatform = false
+    }
+    library {
+        exclusionPatterns.add(Pattern.compile("org\\.jetbrains\\.(?:compose|androidx)\\..*"))
+        duplicationMode = DuplicateMode.MERGE
+        duplicationRule = DuplicateRule.GROUP
+    }
 }
 
 val ktlintVersion = libs.ktlint.get().version

@@ -18,13 +18,19 @@ if (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
 
 option(BUILD_TESTING OFF)
-
-set(XZ_PATCH ${CMAKE_CURRENT_LIST_DIR}/0001-Don-t-build-other-binaries.patch)
+option(XZ_DOC OFF)
+option(XZ_LZIP_DECODER OFF)
+option(XZ_MICROLZMA_DECODER OFF)
+option(XZ_MICROLZMA_ENCODER OFF)
+option(XZ_TOOL_LZMADEC OFF)
+option(XZ_TOOL_LZMAINFO OFF)
+option(XZ_TOOL_XZ OFF)
+option(XZ_TOOL_XZDEC OFF)
 FetchContent_Declare(
         liblzma
         GIT_REPOSITORY https://github.com/tukaani-project/xz.git
-        GIT_TAG v5.6.3
-        PATCH_COMMAND git apply --check -R ${XZ_PATCH} || git apply ${XZ_PATCH}
+        GIT_TAG v5.8.1
+        GIT_SHALLOW 1
 )
 
 FetchContent_MakeAvailable(liblzma)
@@ -45,7 +51,8 @@ ExternalProject_Add(
         nettle
         PREFIX nettle
         GIT_REPOSITORY https://gitlab.com/gnutls/nettle.git
-        GIT_TAG nettle_3.10_release_20240616
+        GIT_TAG nettle_3.10.2_release_20250626
+        GIT_SHALLOW 1
         GIT_CONFIG core.autocrlf=input
         CONFIGURE_COMMAND bash ${CURRENT_DIR}/configure_nettle.sh ${NDK_VERSION} ${CMAKE_C_COMPILER_TARGET}
         BUILD_COMMAND bash -c "make libnettle.a CFLAGS='${CMAKE_C_FLAGS} -Qunused-arguments'"
@@ -86,30 +93,62 @@ option(ENABLE_TEST OFF)
 # Configure libarchive link's static lib
 SET(LIBARCHIVE_CUSTOM_LIBS "libnettle" "liblzma")
 
-set(LIBARCHIVE_PATCH ${CMAKE_CURRENT_LIST_DIR}/0001-Insert-link-libs.patch)
+set(LIBARCHIVE_PATCH
+        ${CMAKE_CURRENT_LIST_DIR}/0001-Insert-link-libs.patch
+        ${CMAKE_CURRENT_LIST_DIR}/0002-Fix-zip_time-performance.patch
+        ${CMAKE_CURRENT_LIST_DIR}/0003-Use-UTF-8-as-default-charset-on-bionic.patch
+)
 FetchContent_Declare(
         libarchive
         GIT_REPOSITORY https://github.com/libarchive/libarchive.git
-        GIT_TAG v3.7.7
+        GIT_TAG v3.8.1
+        GIT_SHALLOW 1
         PATCH_COMMAND git apply --check -R ${LIBARCHIVE_PATCH} || git apply ${LIBARCHIVE_PATCH}
 )
 
 FetchContent_MakeAvailable(libarchive)
 include_directories(${libarchive_SOURCE_DIR}/libarchive)
 
+set(LIBWEBP_PATCH ${CMAKE_CURRENT_LIST_DIR}/0001-Disable-runtime-detection-of-NEON-support.patch)
+FetchContent_Declare(
+        libwebp
+        GIT_REPOSITORY https://chromium.googlesource.com/webm/libwebp
+        GIT_TAG v1.5.0
+        GIT_SHALLOW 1
+        PATCH_COMMAND git apply --check -R ${LIBWEBP_PATCH} || git apply ${LIBWEBP_PATCH}
+)
+
+option(WEBP_BUILD_ANIM_UTILS OFF)
+option(WEBP_BUILD_CWEBP OFF)
+option(WEBP_BUILD_DWEBP OFF)
+option(WEBP_BUILD_VWEBP OFF)
+option(WEBP_BUILD_WEBPINFO OFF)
+option(WEBP_BUILD_LIBWEBPMUX OFF)
+option(WEBP_BUILD_EXTRAS OFF)
+option(WEBP_ENABLE_SWAP_16BIT_CSP ON)
+
+FetchContent_MakeAvailable(libwebp)
+
 FetchContent_Declare(
         Corrosion
         GIT_REPOSITORY https://github.com/corrosion-rs/corrosion.git
-        GIT_TAG v0.5
+        GIT_TAG v0.5.2
+        GIT_SHALLOW 1
 )
 
 FetchContent_MakeAvailable(Corrosion)
-corrosion_import_crate(MANIFEST_PATH ../rust/Cargo.toml LOCKED)
-corrosion_add_target_local_rustflags(ehviewer_rust "-Clink-args=-Wl,-z,max-page-size=16384")
-if (ANDROID_NATIVE_API_LEVEL GREATER_EQUAL 26)
-    corrosion_set_features(ehviewer_rust FEATURES api-level-26)
-endif ()
+corrosion_import_crate(
+        MANIFEST_PATH ../rust/Cargo.toml
+        LOCKED
+        FEATURES $<IF:$<VERSION_GREATER_EQUAL:${ANDROID_NATIVE_API_LEVEL},26>,android-26,android>
+        FLAGS $<$<NOT:$<CONFIG:Debug>>:-Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort>
+)
+corrosion_link_libraries(ehviewer_rust android jnigraphics log webp webpdemux)
 
 # Build and link our app's native lib
 add_library(${PROJECT_NAME} SHARED archive.c gifutils.c hash.c natsort/strnatcmp.c)
-target_link_libraries(${PROJECT_NAME} ehviewer_rust archive_static log jnigraphics -Wl,--exclude-libs,ALL)
+target_link_libraries(
+        ${PROJECT_NAME} archive_static ehviewer_rust
+        -Wl,-u,JNI_OnLoad -Wl,--undefined-glob,Java_*
+        -Wl,--version-script,${CMAKE_SOURCE_DIR}/libehviewer.map.txt
+)

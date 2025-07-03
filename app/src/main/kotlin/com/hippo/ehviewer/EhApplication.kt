@@ -21,6 +21,7 @@ import android.content.Context
 import android.os.StrictMode
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.content.res.AppCompatResources
+import androidx.compose.runtime.Composer
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.coroutineScope
 import coil3.EventListener
@@ -28,14 +29,16 @@ import coil3.SingletonImageLoader
 import coil3.asImage
 import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
-import coil3.network.NetworkFetcher
+import coil3.network.ConnectivityChecker
+import coil3.network.ktor3.KtorNetworkFetcherFactory
 import coil3.request.ErrorResult
 import coil3.request.ImageRequest
+import coil3.request.allowRgb565
 import coil3.request.crossfade
 import coil3.serviceLoaderEnabled
 import coil3.util.DebugLogger
-import com.hippo.ehviewer.client.EhCookieStore
 import com.hippo.ehviewer.client.EhTagDatabase
+import com.hippo.ehviewer.coil.AnimatedWebPDecoder
 import com.hippo.ehviewer.coil.CropBorderInterceptor
 import com.hippo.ehviewer.coil.DetectBorderInterceptor
 import com.hippo.ehviewer.coil.DownloadThumbInterceptor
@@ -43,7 +46,6 @@ import com.hippo.ehviewer.coil.HardwareBitmapInterceptor
 import com.hippo.ehviewer.coil.MapExtraInfoInterceptor
 import com.hippo.ehviewer.coil.MergeInterceptor
 import com.hippo.ehviewer.coil.QrCodeInterceptor
-import com.hippo.ehviewer.coil.limitConcurrency
 import com.hippo.ehviewer.dailycheck.checkDawn
 import com.hippo.ehviewer.dao.SearchDatabase
 import com.hippo.ehviewer.download.DownloadManager
@@ -67,13 +69,13 @@ import com.hippo.ehviewer.util.isAtLeastO
 import com.hippo.ehviewer.util.isAtLeastP
 import com.hippo.ehviewer.util.isAtLeastS
 import com.hippo.ehviewer.util.isAtLeastSExtension7
+import com.hippo.files.deleteContent
 import eu.kanade.tachiyomi.util.lang.launchIO
 import eu.kanade.tachiyomi.util.lang.launchUI
 import eu.kanade.tachiyomi.util.lang.withUIContext
 import eu.kanade.tachiyomi.util.system.logcat
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.plugins.cookies.HttpCookies
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import logcat.AndroidLogcatLogger
@@ -100,8 +102,13 @@ class EhApplication :
                     AppCompatDelegate.setDefaultNightMode(mode)
                 }
             }
-            if (!LogcatLogger.isInstalled && Settings.saveCrashLog) {
-                LogcatLogger.install(AndroidLogcatLogger(LogPriority.VERBOSE))
+            LogcatLogger.loggers += AndroidLogcatLogger(LogPriority.VERBOSE)
+            Settings.saveCrashLog.valueFlow().collect {
+                if (it) {
+                    LogcatLogger.install()
+                } else {
+                    LogcatLogger.uninstall()
+                }
             }
         }
         lifecycle.addObserver(lockObserver)
@@ -109,8 +116,16 @@ class EhApplication :
         super.onCreate()
         System.loadLibrary("ehviewer")
         lifecycleScope.launchIO {
-            launchUI { FavouriteStatusRouter.collect { (gid, slot) -> detailCache[gid]?.favoriteSlot = slot } }
-            launch { EhTagDatabase }
+            launchUI {
+                FavouriteStatusRouter.collect { info ->
+                    detailCache[info.gid]?.apply {
+                        favoriteSlot = info.favoriteSlot
+                        favoriteName = info.favoriteName
+                        favoriteNote = info.favoriteNote
+                    }
+                }
+            }
+            EhTagDatabase.launchUpdate()
             launch { EhDB }
             launchIO { dataStateFlow.value }
             launchIO { OSUtils.totalMemory }
@@ -131,6 +146,7 @@ class EhApplication :
         }
         if (BuildConfig.DEBUG) {
             StrictMode.enableDefaults()
+            Composer.setDiagnosticStackTraceEnabled(true)
         }
     }
 
@@ -148,30 +164,32 @@ class EhApplication :
     }
 
     private fun clearTempDir() {
-        var dir = AppConfig.tempDir
-        if (null != dir) {
-            FileUtils.deleteContent(dir)
-        }
-        dir = AppConfig.externalTempDir
-        if (null != dir) {
-            FileUtils.deleteContent(dir)
-        }
+        AppConfig.tempDir.deleteContent()
+        AppConfig.externalTempDir?.deleteContent()
     }
 
     override fun newImageLoader(context: Context) = context.imageLoader {
         interceptorCoroutineContext(Dispatchers.Default)
         components {
             serviceLoaderEnabled(false)
-            add(NetworkFetcher.Factory({ ktorClient.limitConcurrency() }))
+            add(
+                KtorNetworkFetcherFactory(
+                    httpClient = { ktorClient },
+                    connectivityChecker = { ConnectivityChecker.ONLINE },
+                ),
+            )
             add(MergeInterceptor)
             add(DownloadThumbInterceptor)
             if (isAtLeastO) {
                 add(HardwareBitmapInterceptor)
+            } else {
+                allowRgb565(true)
             }
             add(CropBorderInterceptor)
             add(DetectBorderInterceptor)
             add(QrCodeInterceptor)
             add(MapExtraInfoInterceptor)
+            add(AnimatedWebPDecoder.Factory)
             if (isAtLeastP) {
                 add(AnimatedImageDecoder.Factory(false))
             } else {
@@ -197,9 +215,9 @@ class EhApplication :
 
     companion object {
         val ktorClient by lazy {
-            if (isAtLeastSExtension7 && Settings.enableCronet) {
+            if (isAtLeastSExtension7 && Settings.enableCronet.value) {
                 HttpClient(Cronet) {
-                    engine { configureClient() }
+                    engine { configureClient(Settings.enableQuic.value) }
                     configureCommon()
                 }
             } else {
@@ -212,10 +230,7 @@ class EhApplication :
 
         val noRedirectKtorClient by lazy {
             HttpClient(ktorClient.engine) {
-                followRedirects = false
-                install(HttpCookies) {
-                    storage = EhCookieStore
-                }
+                configureCommon(redirect = false)
             }
         }
 

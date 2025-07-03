@@ -1,5 +1,6 @@
 package com.hippo.ehviewer.ui.main
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
@@ -20,9 +21,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import coil3.BitmapImage
-import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter.State
-import coil3.request.ImageRequest
+import coil3.compose.rememberAsyncImagePainter
 import com.hippo.ehviewer.client.data.GalleryPreview
 import com.hippo.ehviewer.client.data.V2GalleryPreview
 import com.hippo.ehviewer.ktbuilder.imageRequest
@@ -31,21 +31,20 @@ import com.hippo.ehviewer.ui.tools.shouldCrop
 
 @Composable
 @NonRestartableComposable
-fun requestOf(model: GalleryPreview): ImageRequest {
-    val context = LocalContext.current
-    return remember(model) { context.imageRequest(model) }
+fun requestOf(model: GalleryPreview) = with(LocalContext.current) {
+    remember(model) { imageRequest(model) }
 }
 
 @Composable
-fun EhAsyncPreview(
+fun EhPreviewCard(
     model: GalleryPreview,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var contentScale by remember(model) { mutableStateOf(ContentScale.Fit) }
-    AsyncImage(
-        model = requestOf(model),
-        contentDescription = null,
-        modifier = modifier,
+    val request = requestOf(model)
+    val painter = rememberAsyncImagePainter(
+        model = request,
         transform = {
             if (it is State.Success && model is V2GalleryPreview) {
                 with(model) {
@@ -74,8 +73,23 @@ fun EhAsyncPreview(
                 }
             }
         },
-        contentScale = contentScale,
     )
+    CrystalCard(
+        onClick = onClick,
+        onLongClick = {
+            if (painter.state.value is State.Error) {
+                painter.restart()
+            }
+        },
+        modifier = modifier,
+    ) {
+        Image(
+            painter = painter,
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = contentScale,
+        )
+    }
 }
 
 @Composable
@@ -86,16 +100,17 @@ fun EhPreviewItem(
     onClick: () -> Unit,
 ) = Column(horizontalAlignment = Alignment.CenterHorizontally) {
     Box(contentAlignment = Alignment.Center) {
-        CrystalCard(
-            onClick = onClick,
-            modifier = Modifier.aspectRatio(DEFAULT_RATIO),
-        ) {
-            if (galleryPreview != null) {
-                EhAsyncPreview(
-                    model = galleryPreview,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+        if (galleryPreview != null) {
+            EhPreviewCard(
+                model = galleryPreview,
+                onClick = onClick,
+                modifier = Modifier.aspectRatio(DEFAULT_RATIO),
+            )
+        } else {
+            CrystalCard(
+                onClick = onClick,
+                modifier = Modifier.aspectRatio(DEFAULT_RATIO),
+            ) {}
         }
     }
     Text(text = "${position + 1}")

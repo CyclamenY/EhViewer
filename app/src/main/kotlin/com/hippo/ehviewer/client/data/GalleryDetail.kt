@@ -15,10 +15,11 @@
  */
 package com.hippo.ehviewer.client.data
 
-import android.os.Parcelable
 import androidx.compose.ui.util.fastFlatMap
-import com.hippo.ehviewer.client.data.GalleryInfo.Companion.S_LANGS
-import kotlinx.parcelize.Parcelize
+import com.hippo.ehviewer.EhDB
+import com.hippo.ehviewer.Settings
+import com.hippo.ehviewer.client.EhFilter
+import kotlinx.serialization.Serializable
 
 private val LANGUAGES = arrayOf(
     "English",
@@ -37,14 +38,12 @@ private val LANGUAGES = arrayOf(
     "Dutch",
 )
 
-@Parcelize
+@Serializable
 data class GalleryDetail(
     val galleryInfo: BaseGalleryInfo = BaseGalleryInfo(),
     var apiUid: Long = -1L,
     var apiKey: String? = null,
     var torrentCount: Int = 0,
-    var torrentUrl: String? = null,
-    var archiveUrl: String? = null,
     var parent: String? = null,
     var newerVersions: List<BaseGalleryInfo> = emptyList(),
     var visible: String? = null,
@@ -54,13 +53,30 @@ data class GalleryDetail(
     var ratingCount: Int = 0,
     val tagGroups: List<GalleryTagGroup>,
     var comments: GalleryCommentList,
-    val previewPages: Int,
     val previewList: List<GalleryPreview>,
-) : GalleryInfo by galleryInfo,
-    Parcelable {
-    fun fillInfo() {
+) : GalleryInfo by galleryInfo {
+    suspend fun fillInfo() {
         val index = LANGUAGES.indexOf(language)
-        if (index != -1) simpleLanguage = S_LANGS[index]
-        simpleTags = tagGroups.fastFlatMap(GalleryTagGroup::tags)
+        if (index != -1) simpleLanguage = GalleryInfo.S_LANGS[index]
+        simpleTags = tagGroups.fastFlatMap(GalleryTagGroup::tags).map { (text, power, _) ->
+            if (power == PowerStatus.Weak) "_$text" else text
+        }
+        if (favoriteSlot == GalleryInfo.NOT_FAVORITED && EhDB.containLocalFavorites(gid)) {
+            favoriteSlot = GalleryInfo.LOCAL_FAVORITED
+        }
+    }
+
+    suspend fun filterComments() {
+        comments = with(comments) {
+            val scoreThreshold = Settings.commentThreshold
+            copy(
+                comments = comments.filter {
+                    it.uploader ||
+                        it.score > scoreThreshold &&
+                        !EhFilter.filterCommenter(it.user.orEmpty()) &&
+                        !EhFilter.filterComment(it.comment)
+                },
+            )
+        }
     }
 }

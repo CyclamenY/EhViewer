@@ -15,7 +15,6 @@
  */
 package com.hippo.ehviewer.client.data
 
-import android.os.Parcelable
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Ignore
@@ -23,20 +22,18 @@ import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import com.hippo.ehviewer.client.data.GalleryInfo.Companion.NOT_FAVORITED
-import kotlinx.parcelize.Parcelize
 import kotlinx.serialization.Serializable
 
-@Parcelize
 @Serializable
 @Entity(tableName = "GALLERIES")
 @TypeConverters(SimpleTagsConverter::class)
 data class BaseGalleryInfo(
     @PrimaryKey
     @ColumnInfo(name = "GID")
-    override var gid: Long,
+    override var gid: Long = 0,
 
     @ColumnInfo(name = "TOKEN")
-    override var token: String,
+    override var token: String = "",
 
     @ColumnInfo(name = "TITLE")
     override var title: String? = null,
@@ -88,10 +85,7 @@ data class BaseGalleryInfo(
 
     @Ignore
     override var favoriteNote: String? = null,
-) : GalleryInfo,
-    Parcelable {
-    constructor() : this(0, "")
-}
+) : GalleryInfo
 
 class SimpleTagsConverter {
     @TypeConverter

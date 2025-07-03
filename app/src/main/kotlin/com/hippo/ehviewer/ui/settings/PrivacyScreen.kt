@@ -1,6 +1,7 @@
 package com.hippo.ehviewer.ui.settings
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -8,40 +9,33 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.hippo.ehviewer.EhApplication.Companion.searchDatabase
 import com.hippo.ehviewer.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
+import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.isAuthenticationSupported
-import com.hippo.ehviewer.ui.tools.LocalDialogState
+import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.ui.tools.observed
 import com.hippo.ehviewer.ui.tools.rememberedAccessor
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import moe.tarsin.launch
+import moe.tarsin.snackbar
 
 @Destination<RootGraph>
 @Composable
-fun PrivacyScreen(navigator: DestinationsNavigator) {
+fun AnimatedVisibilityScope.PrivacyScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-    val snackbarHostState = remember { SnackbarHostState() }
-    val coroutineScope = rememberCoroutineScope { Dispatchers.IO }
-    fun launchSnackBar(content: String) = coroutineScope.launch { snackbarHostState.showSnackbar(content) }
-    val dialogState = LocalDialogState.current
+    fun launchSnackbar(message: String) = launch { snackbar(message) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -54,14 +48,13 @@ fun PrivacyScreen(navigator: DestinationsNavigator) {
                 scrollBehavior = scrollBehavior,
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) {
         Column(modifier = Modifier.padding(it).nestedScroll(scrollBehavior.nestedScrollConnection)) {
             val security = Settings.security.asMutableState()
             SwitchPreference(
                 title = stringResource(id = R.string.settings_privacy_require_unlock),
                 value = security.rememberedAccessor,
-                enabled = LocalContext.current.isAuthenticationSupported(),
+                enabled = isAuthenticationSupported(),
             )
             AnimatedVisibility(visible = security.value) {
                 val securityDelay = Settings::securityDelay.observed
@@ -75,7 +68,7 @@ fun PrivacyScreen(navigator: DestinationsNavigator) {
                     title = stringResource(id = R.string.settings_privacy_require_unlock_delay),
                     summary = summary,
                     value = securityDelay.rememberedAccessor,
-                    enabled = LocalContext.current.isAuthenticationSupported(),
+                    enabled = isAuthenticationSupported(),
                 )
             }
             SwitchPreference(
@@ -88,13 +81,13 @@ fun PrivacyScreen(navigator: DestinationsNavigator) {
                 title = stringResource(id = R.string.clear_search_history),
                 summary = stringResource(id = R.string.clear_search_history_summary),
             ) {
-                coroutineScope.launch {
-                    dialogState.awaitConfirmationOrCancel(
+                launch {
+                    awaitConfirmationOrCancel(
                         confirmText = R.string.clear_all,
                         title = R.string.clear_search_history_confirm,
                     )
                     searchDatabase.searchDao().clear()
-                    launchSnackBar(searchHistoryCleared)
+                    launchSnackbar(searchHistoryCleared)
                 }
             }
         }

@@ -48,24 +48,16 @@
       "groupName": "AGP",
       "matchDepNames": [
         "com.android.application",
+        "com.android.settings",
         "com.android.test"
       ],
-      "allowedVersions": "/^.*-alpha\\d*$/",
-      "ignoreUnstable": false
+      "allowedVersions": "/^[\\d.]+(-alpha\\d+)?$/"
     },
     {
-      "matchDepPrefixes": [
-        "androidx."
+      "matchDepNames": [
+        "org.jetbrains.kotlinx:kotlinx-datetime"
       ],
-      "ignoreUnstable": false
-    },
-    {
-      "groupName": "Kotlin & KSP",
-      "matchSourceUrls": [
-        "https://github.com/JetBrains/kotlin",
-        "https://github.com/google/ksp"
-      ],
-      "recreateWhen": "never"
+      "allowedVersions": "!/compat$/"
     },
     {
       "matchDepNames": [

@@ -6,26 +6,31 @@ import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.navigation.NavBackStackEntry
 import com.hippo.ehviewer.ui.theme.EhTheme
 import com.hippo.ehviewer.ui.tools.DialogState
-import com.hippo.ehviewer.ui.tools.LocalDialogState
+import com.hippo.ehviewer.ui.tools.LocalGlobalDialogState
 import com.hippo.ehviewer.ui.tools.ProvideVectorPainterCache
 import com.ramcosta.composedestinations.animations.NavHostAnimatedDestinationStyle
 import soup.compose.material.motion.animation.materialSharedAxisXIn
 import soup.compose.material.motion.animation.materialSharedAxisXOut
 import soup.compose.material.motion.animation.rememberSlideDistance
 
-inline fun ComponentActivity.setMD3Content(crossinline content: @Composable () -> Unit) = setContent {
+inline fun ComponentActivity.setMD3Content(crossinline content: @Composable DialogState.() -> Unit) = setContent {
     EhTheme(useDarkTheme = isSystemInDarkTheme()) {
         ProvideVectorPainterCache {
-            CompositionLocalProvider(
-                LocalDialogState provides remember { DialogState() }.apply { Intercept() },
-            ) {
-                content()
+            val dialogState = remember { DialogState() }
+            CompositionLocalProvider(LocalGlobalDialogState provides dialogState) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    content(dialogState)
+                    dialogState.Place()
+                }
             }
         }
     }

@@ -1,44 +1,40 @@
+use crate::EhError;
+use crate::{EHGT_PREFIX, EX_PREFIX};
 use crate::{get_element_by_id, get_vdom_first_element_by_class_name};
 use crate::{get_first_element_by_class_name, query_childs_first_match_attr};
 use crate::{get_node_attr, get_node_handle_attr, regex};
-use crate::{parse_marshal_inplace, EhError};
-use crate::{EHGT_PREFIX, EX_PREFIX};
-use anyhow::{bail, Context, Result};
-use jni::objects::{JByteBuffer, JClass};
-use jni::sys::jint;
-use jni::JNIEnv;
-use jni_fn::jni_fn;
+use anyhow::{Context, Result, bail};
 use quick_xml::escape::unescape;
 use serde::Serialize;
 use std::borrow::Cow;
 use std::ops::Index;
 use tl::{Node, Parser, VDom};
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug, Default)]
 #[allow(non_snake_case)]
-struct BaseGalleryInfo {
-    gid: i64,
-    token: String,
-    title: String,
-    titleJpn: Option<String>,
-    thumbKey: String,
-    category: i32,
-    posted: String,
-    uploader: Option<String>,
-    disowned: bool,
-    rating: f32,
-    rated: bool,
-    simpleTags: Vec<String>,
-    pages: i32,
-    thumbWidth: i32,
-    thumbHeight: i32,
-    simpleLanguage: Option<String>,
-    favoriteSlot: i32,
-    favoriteName: Option<String>,
-    favoriteNote: Option<String>,
+pub struct BaseGalleryInfo {
+    pub gid: i64,
+    pub token: String,
+    pub title: String,
+    pub titleJpn: Option<String>,
+    pub thumbKey: String,
+    pub category: i32,
+    pub posted: String,
+    pub uploader: Option<String>,
+    pub disowned: bool,
+    pub rating: f32,
+    pub rated: bool,
+    pub simpleTags: Vec<String>,
+    pub pages: i32,
+    pub thumbWidth: i32,
+    pub thumbHeight: i32,
+    pub simpleLanguage: Option<String>,
+    pub favoriteSlot: i32,
+    pub favoriteName: Option<String>,
+    pub favoriteNote: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[allow(non_snake_case)]
 pub struct GalleryListResult {
     prev: Option<String>,
@@ -46,7 +42,7 @@ pub struct GalleryListResult {
     galleryInfoList: Vec<BaseGalleryInfo>,
 }
 
-fn to_category_i32(category: &str) -> i32 {
+pub fn to_category_i32(category: &str) -> i32 {
     match category {
         "misc" => 0x1,
         "doujinshi" => 0x2,
@@ -79,14 +75,14 @@ fn parse_rating(str: &str) -> f32 {
     }
 }
 
-fn get_thumb_key(url: &str) -> String {
+pub fn get_thumb_key(url: &str) -> String {
     url.trim_start_matches(EHGT_PREFIX)
         .trim_start_matches(EX_PREFIX)
         .trim_start_matches("t/")
         .to_string()
 }
 
-fn parse_token_and_gid(str: &str) -> Option<(i64, String)> {
+pub fn parse_token_and_gid(str: &str) -> Option<(i64, String)> {
     let grp =
         regex!("https?://(?:exhentai.org|e-hentai.org(?:/lofi)?)/(?:g|mpv)/(\\d+)/([0-9a-f]{10})")
             .captures(str)?;
@@ -100,11 +96,8 @@ fn parse_uploader_and_pages(str: &str) -> (Option<String>, bool, i32) {
         regex!(r#"<a href="https://e[x-]hentai.org/uploader/.*?">(.*?)</a>|(\(Disowned\))"#)
             .captures(str)
             .map(|grp| {
-                grp.get(1)
-                    .or_else(|| grp.get(2))
-                    .unwrap()
-                    .as_str()
-                    .to_string()
+                let str = grp.get(1).or_else(|| grp.get(2)).unwrap().as_str();
+                unescape(str).as_deref().unwrap_or(str).to_string()
             });
     let pages = match regex!(r"<div>(\d+) pages</div>").captures(str) {
         None => 0,
@@ -159,7 +152,8 @@ fn parse_gallery_info(node: &Node, parser: &Parser) -> Option<BaseGalleryInfo> {
             None => ("".to_string(), None),
             Some(node) => (
                 node.inner_text(parser).trim().to_string(),
-                get_node_attr(node, "title").map(str::to_string),
+                get_node_attr(node, "title")
+                    .map(|s| unescape(s).as_deref().unwrap_or(s).to_string()),
             ),
         };
     let ir = get_first_element_by_class_name(node, parser, "ir")?
@@ -172,8 +166,11 @@ fn parse_gallery_info(node: &Node, parser: &Parser) -> Option<BaseGalleryInfo> {
             None => (None, false, 0),
             Some(node) => parse_uploader_and_pages(&node.get(parser)?.inner_html(parser)),
         };
-    let favorite_note = get_element_by_id(node, parser, format!("favnote_{gid}").as_str())
-        .map(|e| e.inner_text(parser).to_string());
+    let favorite_note =
+        get_element_by_id(node, parser, format!("favnote_{gid}").as_str()).map(|e| {
+            let str = e.inner_text(parser);
+            unescape(&str).as_deref().unwrap_or(&str).to_string()
+        });
     Some(BaseGalleryInfo {
         gid,
         token,
@@ -240,13 +237,4 @@ pub fn parse_info_list(dom: &VDom, parser: &Parser, str: &str) -> Result<Gallery
         })
     };
     f().context("No content")
-}
-
-#[no_mangle]
-#[allow(non_snake_case)]
-#[jni_fn("com.hippo.ehviewer.client.parser.GalleryListParserKt")]
-pub fn parseGalleryInfoList(mut env: JNIEnv, _: JClass, buffer: JByteBuffer, limit: jint) -> jint {
-    parse_marshal_inplace(&mut env, buffer, limit, |dom, str| {
-        parse_info_list(dom, dom.parser(), str)
-    })
 }

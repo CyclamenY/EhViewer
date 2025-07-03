@@ -2,14 +2,21 @@ package com.hippo.files
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.provider.MediaStore
+import android.system.ErrnoException
+import android.system.Int64Ref
+import android.system.Os
 import android.webkit.MimeTypeMap
 import androidx.core.database.getLongOrNull
+import kotlinx.io.asSink
+import kotlinx.io.asSource
 import okio.FileHandle
 import okio.FileMetadata
+import okio.FileNotFoundException
 import okio.FileSystem
 import okio.IOException
 import okio.Path
@@ -32,11 +39,37 @@ class AndroidFileSystem(context: Context) : FileSystem() {
 
         source.runCatching {
             DocumentsContract.renameDocument(contentResolver, toUri(), target.name)
-        }.getOrNull() ?: throw IOException("Failed to move $source to $target")
+        }.onFailure {
+            // ExternalStorageProvider always throw exception when renameDocument on API 28
+            // https://android.googlesource.com/platform/frameworks/base/+/7bf90408e36613a84dc2a665905fde2c83cfa797
+            if (Build.VERSION.SDK_INT != Build.VERSION_CODES.P) {
+                throw FileNotFoundException("Failed to move $source to $target")
+            }
+        }
     }
 
     override fun canonicalize(path: Path): Path {
         TODO("Not yet implemented")
+    }
+
+    override fun copy(source: Path, target: Path) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            source.openFileDescriptor("r").use { src ->
+                target.openFileDescriptor("wt").use { dst ->
+                    try {
+                        Os.sendfile(dst.fileDescriptor, src.fileDescriptor, Int64Ref(0), Long.MAX_VALUE)
+                        return
+                    } catch (_: ErrnoException) {}
+                }
+            }
+        }
+
+        // Fallback to transferTo if sendfile is not available or fails
+        source.inputStream().use { src ->
+            target.outputStream().use { dst ->
+                src.channel.transferTo(0, Long.MAX_VALUE, dst.channel)
+            }
+        }
     }
 
     override fun createDirectory(dir: Path, mustCreate: Boolean) {
@@ -82,7 +115,7 @@ class AndroidFileSystem(context: Context) : FileSystem() {
                 throw IOException("Failed to delete $path")
             }
         } else if (mustExist) {
-            throw IOException("$path does not exist")
+            throw FileNotFoundException("$path does not exist")
         }
     }
 
@@ -126,7 +159,7 @@ class AndroidFileSystem(context: Context) : FileSystem() {
                     dir / displayName
                 }
             }
-        }.getOrElse { if (throwOnFailure) throw it else null }
+        }.getOrElse { if (throwOnFailure) throw FileNotFoundException("Failed to list $dir") else null }
     }
 
     override fun metadataOrNull(path: Path): FileMetadata? {
@@ -175,22 +208,30 @@ class AndroidFileSystem(context: Context) : FileSystem() {
         TODO("Not yet implemented")
     }
 
+    fun rawSink(file: Path) = file.outputStream().asSink()
+
+    fun rawSource(file: Path) = file.inputStream().asSource()
+
     fun openFileDescriptor(path: Path, mode: String): ParcelFileDescriptor {
         if (path.isPhysicalFile()) {
             return ParcelFileDescriptor.open(path.toFile(), ParcelFileDescriptor.parseMode(mode))
         }
 
-        if ('w' in mode && !exists(path)) {
-            path.parent?.runCatching {
+        return runCatching {
+            if ('w' in mode && !exists(path)) {
+                val parent = path.parent ?: return@runCatching null
                 val displayName = path.name
                 val extension = displayName.substringAfterLast('.', "").ifEmpty { null }?.lowercase()
                 val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "application/octet-stream"
-                DocumentsContract.createDocument(contentResolver, toUri(), mimeType, displayName)
-            }?.getOrNull() ?: throw IOException("Failed to open file: $path")
-        }
-
-        return contentResolver.openFileDescriptor(path.toUri(), mode) ?: throw IOException("Failed to open file: $path")
+                DocumentsContract.createDocument(contentResolver, parent.toUri(), mimeType, displayName)
+            }
+            contentResolver.openFileDescriptor(path.toUri(), mode)
+        }.getOrNull() ?: throw FileNotFoundException("Failed to open file: $path")
     }
+
+    private fun Path.inputStream() = ParcelFileDescriptor.AutoCloseInputStream(openFileDescriptor(this, "r"))
+
+    private fun Path.outputStream() = ParcelFileDescriptor.AutoCloseOutputStream(openFileDescriptor(this, "wt"))
 }
 
 private fun Path.isPhysicalFile() = toString().startsWith('/')

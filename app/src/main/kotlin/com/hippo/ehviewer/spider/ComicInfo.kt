@@ -3,6 +3,8 @@ package com.hippo.ehviewer.spider
 import com.hippo.ehviewer.client.EhUrl
 import com.hippo.ehviewer.client.data.GalleryDetail
 import com.hippo.ehviewer.client.data.GalleryInfo
+import com.hippo.ehviewer.client.data.GalleryTag
+import com.hippo.ehviewer.client.data.PowerStatus
 import com.hippo.ehviewer.client.data.SimpleTagsConverter
 import com.hippo.ehviewer.client.data.TagNamespace
 import com.hippo.ehviewer.client.data.TagNamespace.Artist
@@ -14,8 +16,8 @@ import com.hippo.ehviewer.client.data.TagNamespace.Male
 import com.hippo.ehviewer.client.data.TagNamespace.Mixed
 import com.hippo.ehviewer.client.data.TagNamespace.Other
 import com.hippo.ehviewer.client.data.TagNamespace.Parody
-import com.hippo.files.openInputStream
-import com.hippo.files.openOutputStream
+import com.hippo.files.read
+import com.hippo.files.write
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -23,12 +25,12 @@ import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import net.devrieze.xmlutil.serialization.kxio.decodeFromSource
+import net.devrieze.xmlutil.serialization.kxio.encodeToSink
 import nl.adaptivity.xmlutil.XmlDeclMode
 import nl.adaptivity.xmlutil.core.XmlVersion
-import nl.adaptivity.xmlutil.newWriter
 import nl.adaptivity.xmlutil.serialization.XML
 import nl.adaptivity.xmlutil.serialization.XmlElement
-import nl.adaptivity.xmlutil.xmlStreaming
 import okio.Path
 
 const val COMIC_INFO_FILE = "ComicInfo.xml"
@@ -52,8 +54,8 @@ fun GalleryInfo.getComicInfo(): ComicInfo {
     with(TagNamespace) {
         when (this@getComicInfo) {
             is GalleryDetail -> tagGroups.forEach { group ->
-                val list = group.tags.filterNot { it == TAG_ORIGINAL || it.startsWith('_') }
-                when (val ns = group.nameSpace) {
+                val list = group.tags.filterNot { (text, power, _) -> text == TAG_ORIGINAL || power == PowerStatus.Weak }.map(GalleryTag::text)
+                when (val ns = group.namespace) {
                     Artist, Cosplayer -> artists.addAll(list)
                     Group -> groups.addAll(list)
                     Character -> characters.addAll(list)
@@ -104,19 +106,11 @@ fun ComicInfo.toSimpleTags() = listOfNotNull(
     teams,
 ).flatten().ifEmpty { null }
 
-fun ComicInfo.write(file: Path) {
-    file.openOutputStream().bufferedWriter().use {
-        xmlStreaming.newWriter(it).use { writer ->
-            xml.encodeToWriter(writer, ComicInfo.serializer(), this)
-        }
-    }
-}
+fun writeComicInfo(info: ComicInfo, file: Path) = file.write { xml.encodeToSink(this, info) }
 
 fun readComicInfo(file: Path): ComicInfo? = runCatching {
-    file.openInputStream().bufferedReader().use {
-        xmlStreaming.newReader(it).use { reader ->
-            xml.decodeFromReader(ComicInfo.serializer(), reader)
-        }
+    file.read {
+        xml.decodeFromSource<ComicInfo>(this)
     }
 }.getOrNull()
 

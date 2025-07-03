@@ -30,7 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import com.hippo.ehviewer.R
 import com.hippo.ehviewer.client.data.ListUrlBuilder
 import com.hippo.ehviewer.client.data.ListUrlBuilder.Companion.MODE_IMAGE_SEARCH
-import com.hippo.ehviewer.ui.composing
+import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.main.ImageSearch
 import com.hippo.ehviewer.ui.main.plus
 import com.hippo.ehviewer.ui.tools.snackBarPadding
@@ -40,13 +40,15 @@ import com.hippo.files.toOkioPath
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
-import eu.kanade.tachiyomi.util.lang.launchUI
 import eu.kanade.tachiyomi.util.lang.withIOContext
-import kotlinx.coroutines.launch
+import moe.tarsin.launch
+import moe.tarsin.launchUI
+import moe.tarsin.navigate
+import moe.tarsin.snackbar
 
 @Destination<RootGraph>
 @Composable
-fun AnimatedVisibilityScope.ImageSearchScreen(navigator: DestinationsNavigator) = composing(navigator) {
+fun AnimatedVisibilityScope.ImageSearchScreen(navigator: DestinationsNavigator) = Screen(navigator) {
     val selectImageFirst = stringResource(R.string.select_image_first)
     val marginH = dimensionResource(id = R.dimen.gallery_list_margin_h)
     val marginV = dimensionResource(id = R.dimen.gallery_list_margin_v)
@@ -72,7 +74,7 @@ fun AnimatedVisibilityScope.ImageSearchScreen(navigator: DestinationsNavigator) 
                             )
                         }
                     } else {
-                        launch { showSnackbar(selectImageFirst) }
+                        launch { snackbar(selectImageFirst) }
                     }
                 },
                 modifier = Modifier.snackBarPadding(),

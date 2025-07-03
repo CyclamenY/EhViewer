@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,10 +27,10 @@ import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ImageSearch
+import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -51,7 +52,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.LocalPinnableContainer
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.viewModelScope
@@ -63,7 +63,6 @@ import androidx.paging.cachedIn
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
-import androidx.window.core.layout.WindowWidthSizeClass
 import arrow.core.partially1
 import arrow.fx.coroutines.parMap
 import arrow.fx.coroutines.parZip
@@ -82,8 +81,13 @@ import com.hippo.ehviewer.client.data.GalleryPreview
 import com.hippo.ehviewer.client.data.GalleryTagGroup
 import com.hippo.ehviewer.client.data.ListUrlBuilder
 import com.hippo.ehviewer.client.data.TagNamespace
+import com.hippo.ehviewer.client.data.V2GalleryPreview
+import com.hippo.ehviewer.client.data.VoteStatus
 import com.hippo.ehviewer.client.data.asGalleryDetail
 import com.hippo.ehviewer.client.data.findBaseInfo
+import com.hippo.ehviewer.client.exception.EhException
+import com.hippo.ehviewer.client.exception.NoHathClientException
+import com.hippo.ehviewer.coil.PrefetchAround
 import com.hippo.ehviewer.coil.justDownload
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.dao.DownloadInfo
@@ -92,14 +96,15 @@ import com.hippo.ehviewer.dao.FilterMode
 import com.hippo.ehviewer.download.DownloadManager
 import com.hippo.ehviewer.icons.EhIcons
 import com.hippo.ehviewer.icons.filled.Magnet
+import com.hippo.ehviewer.ktbuilder.executeIn
 import com.hippo.ehviewer.ktbuilder.imageRequest
-import com.hippo.ehviewer.ktbuilder.launchIn
 import com.hippo.ehviewer.ui.GalleryInfoBottomSheet
 import com.hippo.ehviewer.ui.MainActivity
 import com.hippo.ehviewer.ui.confirmRemoveDownload
 import com.hippo.ehviewer.ui.destinations.GalleryCommentsScreenDestination
 import com.hippo.ehviewer.ui.getFavoriteIcon
 import com.hippo.ehviewer.ui.jumpToReaderByPage
+import com.hippo.ehviewer.ui.main.ArchiveList
 import com.hippo.ehviewer.ui.main.EhPreviewItem
 import com.hippo.ehviewer.ui.main.GalleryCommentCard
 import com.hippo.ehviewer.ui.main.GalleryDetailErrorTip
@@ -112,7 +117,6 @@ import com.hippo.ehviewer.ui.openBrowser
 import com.hippo.ehviewer.ui.startDownload
 import com.hippo.ehviewer.ui.tools.CrystalCard
 import com.hippo.ehviewer.ui.tools.DialogState
-import com.hippo.ehviewer.ui.tools.EmptyWindowInsets
 import com.hippo.ehviewer.ui.tools.FastScrollLazyVerticalGrid
 import com.hippo.ehviewer.ui.tools.FilledTertiaryIconButton
 import com.hippo.ehviewer.ui.tools.FilledTertiaryIconToggleButton
@@ -120,18 +124,24 @@ import com.hippo.ehviewer.ui.tools.GalleryDetailRating
 import com.hippo.ehviewer.ui.tools.GalleryRatingBar
 import com.hippo.ehviewer.ui.tools.LocalWindowSizeClass
 import com.hippo.ehviewer.ui.tools.TransitionsVisibilityScope
+import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
+import com.hippo.ehviewer.ui.tools.awaitResult
+import com.hippo.ehviewer.ui.tools.awaitSelectAction
+import com.hippo.ehviewer.ui.tools.awaitSelectItem
+import com.hippo.ehviewer.ui.tools.dialog
 import com.hippo.ehviewer.ui.tools.foldToLoadResult
 import com.hippo.ehviewer.ui.tools.getClippedRefreshKey
 import com.hippo.ehviewer.ui.tools.getLimit
 import com.hippo.ehviewer.ui.tools.getOffset
+import com.hippo.ehviewer.ui.tools.isExpanded
 import com.hippo.ehviewer.ui.tools.rememberInVM
+import com.hippo.ehviewer.ui.tools.showNoButton
 import com.hippo.ehviewer.util.FavouriteStatusRouter
 import com.hippo.ehviewer.util.addTextToClipboard
 import com.hippo.ehviewer.util.bgWork
+import com.hippo.ehviewer.util.displayString
 import com.hippo.ehviewer.util.flattenForEach
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
-import eu.kanade.tachiyomi.util.lang.launchIO
-import eu.kanade.tachiyomi.util.lang.launchUI
 import eu.kanade.tachiyomi.util.lang.withIOContext
 import eu.kanade.tachiyomi.util.lang.withUIContext
 import eu.kanade.tachiyomi.util.system.logcat
@@ -142,19 +152,24 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.launch
+import moe.tarsin.async
 import moe.tarsin.coroutines.runSuspendCatching
 import moe.tarsin.coroutines.runSwallowingWithUI
+import moe.tarsin.launch
+import moe.tarsin.launchIO
+import moe.tarsin.launchUI
+import moe.tarsin.navigate
+import moe.tarsin.snackbar
+import moe.tarsin.string
 
-context(CoroutineScope, DestinationsNavigator, DialogState, MainActivity, SnackbarHostState, SharedTransitionScope, TransitionsVisibilityScope)
+context(_: CoroutineScope, _: DestinationsNavigator, _: DialogState, _: MainActivity, _: SnackbarHostState, _: SharedTransitionScope, _: TransitionsVisibilityScope)
 @Composable
 fun GalleryDetailContent(
     galleryInfo: GalleryInfo,
     contentPadding: PaddingValues,
     getDetailError: String,
     onRetry: () -> Unit,
+    voteTag: VoteTag,
     modifier: Modifier,
 ) {
     val keylineMargin = dimensionResource(R.dimen.keyline_margin)
@@ -207,7 +222,7 @@ fun GalleryDetailContent(
             dialog { cont ->
                 ModalBottomSheet(
                     onDismissRequest = { cont.cancel() },
-                    contentWindowInsets = { EmptyWindowInsets },
+                    contentWindowInsets = { WindowInsets() },
                 ) {
                     GalleryInfoBottomSheet(galleryDetail)
                 }
@@ -227,21 +242,21 @@ fun GalleryDetailContent(
                 Text(text = stringResource(R.string.filter_the_uploader, uploader))
             }
             Filter(FilterMode.UPLOADER, uploader).remember()
-            showSnackbar(filterAdded)
+            snackbar(filterAdded)
         }
     }
     fun onDownloadButtonClick() {
         galleryDetail ?: return
         if (DownloadManager.getDownloadState(galleryDetail.gid) == DownloadInfo.STATE_INVALID) {
-            launchUI { startDownload(implicit<MainActivity>(), false, galleryDetail.galleryInfo) }
+            launchUI { startDownload(false, galleryDetail.galleryInfo) }
         } else {
             launch { confirmRemoveDownload(galleryDetail) }
         }
     }
 
-    val previews = galleryDetail.collectPreviewItems(thumbColumns)
-    when (windowSizeClass.windowWidthSizeClass) {
-        WindowWidthSizeClass.MEDIUM, WindowWidthSizeClass.COMPACT -> FastScrollLazyVerticalGrid(
+    val previews = galleryDetail?.collectPreviewItems()
+    when {
+        !windowSizeClass.isExpanded -> FastScrollLazyVerticalGrid(
             columns = GridCells.Fixed(thumbColumns),
             contentPadding = contentPadding,
             modifier = modifier.padding(horizontal = keylineMargin),
@@ -286,23 +301,23 @@ fun GalleryDetailContent(
                     if (getDetailError.isNotBlank()) {
                         GalleryDetailErrorTip(error = getDetailError, onClick = onRetry)
                     } else if (galleryDetail != null) {
-                        BelowHeader(galleryDetail)
+                        BelowHeader(galleryDetail, voteTag)
                     } else {
                         Box(
                             modifier = Modifier.fillMaxSize().padding(keylineMargin),
                             contentAlignment = Alignment.Center,
                         ) {
-                            CircularProgressIndicator()
+                            CircularWavyProgressIndicator()
                         }
                     }
                 }
             }
-            if (galleryDetail != null) {
-                galleryPreview(previews) { navToReader(galleryDetail.galleryInfo, it) }
+            if (galleryDetail != null && previews != null) {
+                galleryPreview(galleryDetail, previews) { navToReader(galleryDetail.galleryInfo, it) }
             }
         }
 
-        WindowWidthSizeClass.EXPANDED -> FastScrollLazyVerticalGrid(
+        else -> FastScrollLazyVerticalGrid(
             columns = GridCells.Fixed(thumbColumns),
             contentPadding = contentPadding,
             modifier = modifier.padding(horizontal = keylineMargin),
@@ -354,27 +369,27 @@ fun GalleryDetailContent(
                     if (getDetailError.isNotBlank()) {
                         GalleryDetailErrorTip(error = getDetailError, onClick = onRetry)
                     } else if (galleryDetail != null) {
-                        BelowHeader(galleryDetail)
+                        BelowHeader(galleryDetail, voteTag)
                     } else {
                         Box(
                             modifier = Modifier.fillMaxSize().padding(keylineMargin),
                             contentAlignment = Alignment.Center,
                         ) {
-                            CircularProgressIndicator()
+                            CircularWavyProgressIndicator()
                         }
                     }
                 }
             }
-            if (galleryDetail != null) {
-                galleryPreview(previews) { navToReader(galleryDetail.galleryInfo, it) }
+            if (galleryDetail != null && previews != null) {
+                galleryPreview(galleryDetail, previews) { navToReader(galleryDetail.galleryInfo, it) }
             }
         }
     }
 }
 
-context(Context, CoroutineScope, DestinationsNavigator, DialogState, SnackbarHostState)
+context(ctx: Context, _: CoroutineScope, _: DestinationsNavigator, _: DialogState, _: SnackbarHostState)
 @Composable
-fun BelowHeader(galleryDetail: GalleryDetail) {
+fun BelowHeader(galleryDetail: GalleryDetail, voteTag: VoteTag) {
     @Composable
     fun EhIconButton(
         icon: ImageVector,
@@ -398,7 +413,7 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
             commentsList.size <= maxShowCount -> stringResource(R.string.no_more_comments)
             else -> stringResource(R.string.more_comment)
         }
-        fun onNavigateToCommentScene() {
+        fun navigateToCommentScreen() {
             navigate(GalleryCommentsScreenDestination(galleryDetail.gid))
         }
         CrystalCard {
@@ -406,12 +421,17 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
                 GalleryCommentCard(
                     modifier = Modifier.padding(vertical = 4.dp),
                     comment = item,
-                    onCardClick = ::onNavigateToCommentScene,
-                    onUserClick = ::onNavigateToCommentScene,
-                    onUrlClick = { if (!jumpToReaderByPage(it, galleryDetail)) if (!navWithUrl(it)) openBrowser(it) },
+                    onCardClick = ::navigateToCommentScreen,
+                    onUserClick = ::navigateToCommentScreen,
+                    onUrlClick = {
+                        if (it.startsWith("#c")) {
+                            navigateToCommentScreen()
+                        } else {
+                            if (!jumpToReaderByPage(it, galleryDetail)) if (!navWithUrl(it)) openBrowser(it)
+                        }
+                    },
                     maxLines = 5,
-                    overflow = TextOverflow.Ellipsis,
-                    showImage = false,
+                    ellipsis = true,
                 )
             }
             Box(
@@ -419,7 +439,7 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
                     .fillMaxWidth()
                     .padding(bottom = dimensionResource(id = R.dimen.strip_item_padding_v))
                     .clip(RoundedCornerShape(16.dp))
-                    .clickable(onClick = ::onNavigateToCommentScene),
+                    .clickable(onClick = ::navigateToCommentScreen),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(commentText)
@@ -428,7 +448,7 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
     }
     suspend fun showNewerVersionDialog() {
         val items = galleryDetail.newerVersions.map {
-            getString(R.string.newer_version_title, it.title, it.posted)
+            string(R.string.newer_version_title, it.title, it.posted)
         }
         val selected = awaitSelectItem(items)
         val info = galleryDetail.newerVersions[selected]
@@ -475,13 +495,13 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
                                 modifyFavorites(galleryDetail.galleryInfo)
                             }.onSuccess { add ->
                                 if (add) {
-                                    showSnackbar(addSucceed)
+                                    snackbar(addSucceed)
                                 } else {
-                                    showSnackbar(removeSucceed)
+                                    snackbar(removeSucceed)
                                 }
                             }.onFailure {
                                 // TODO: We don't know if it's add or remove
-                                showSnackbar(addFailed)
+                                snackbar(addFailed)
                             }
                         }
                     }
@@ -499,7 +519,7 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
             text = stringResource(id = R.string.similar_gallery),
             onClick = {
                 val keyword = EhUtils.extractTitle(galleryDetail.title)
-                val artistTag = galleryDetail.tagGroups.getArtistTag()
+                val artistTag = galleryDetail.tagGroups.artistTag()
                 if (null != keyword) {
                     navigate(
                         ListUrlBuilder(
@@ -524,25 +544,61 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
                 }
             },
         )
+        val signInFirst = stringResource(R.string.sign_in_first)
+        val noArchive = stringResource(R.string.no_archives)
+        val downloadStarted = stringResource(R.string.download_archive_started)
+        val downloadFailed = stringResource(R.string.download_archive_failure)
+        val archiveResult = remember(galleryDetail) {
+            async(Dispatchers.IO + Job(), CoroutineStart.LAZY) {
+                with(galleryDetail) {
+                    EhEngine.getArchiveList(gid, token)
+                }
+            }
+        }
+        fun showArchiveDialog() {
+            launchIO {
+                if (galleryDetail.apiUid < 0) {
+                    snackbar(signInFirst)
+                } else {
+                    runSuspendCatching {
+                        val (archiveList, funds) = bgWork { archiveResult.await() }
+                        if (archiveList.isEmpty()) {
+                            snackbar(noArchive)
+                        } else {
+                            val selected = showNoButton {
+                                ArchiveList(
+                                    funds = funds,
+                                    items = archiveList,
+                                    onItemClick = { resume(it) },
+                                )
+                            }
+                            EhUtils.downloadArchive(galleryDetail, selected)
+                            snackbar(downloadStarted)
+                        }
+                    }.onFailure {
+                        when (it) {
+                            is NoHathClientException -> snackbar(it.message!!)
+                            is EhException -> snackbar(it.displayString())
+                            else -> {
+                                logcat(it)
+                                snackbar(downloadFailed)
+                            }
+                        }
+                    }
+                }
+            }
+        }
         EhIconButton(
-            icon = Icons.Default.ImageSearch,
-            text = stringResource(id = R.string.search_cover),
-            onClick = {
-                val key = galleryDetail.thumbKey!!
-                navigate(
-                    ListUrlBuilder(
-                        mode = ListUrlBuilder.MODE_IMAGE_SEARCH,
-                        hash = key.substringAfterLast('/').substringBefore('-'),
-                    ).asDst(),
-                )
-            },
+            icon = Icons.Default.FolderZip,
+            text = stringResource(id = R.string.archive),
+            onClick = ::showArchiveDialog,
         )
         val torrentText = stringResource(R.string.torrent_count, galleryDetail.torrentCount)
         val noTorrents = stringResource(R.string.no_torrents)
         val torrentResult = remember(galleryDetail) {
             async(Dispatchers.IO + Job(), CoroutineStart.LAZY) {
                 parZip(
-                    { EhEngine.getTorrentList(galleryDetail.torrentUrl!!, galleryDetail.gid, galleryDetail.token) },
+                    { EhEngine.getTorrentList(galleryDetail.gid, galleryDetail.token) },
                     { EhEngine.getTorrentKey() },
                     { list, key -> list to key },
                 )
@@ -551,7 +607,7 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
         suspend fun showTorrentDialog() {
             val (torrentList, key) = bgWork { torrentResult.await() }
             if (torrentList.isEmpty()) {
-                showSnackbar(noTorrents)
+                snackbar(noTorrents)
             } else {
                 val selected = showNoButton(false) {
                     TorrentList(
@@ -565,7 +621,7 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
                 val link = "magnet:?xt=urn:btih:$hash&dn=$name&tr=$tracker"
                 val intent = Intent(Intent.ACTION_VIEW, link.toUri())
                 try {
-                    startActivity(intent)
+                    ctx.startActivity(intent)
                 } catch (_: ActivityNotFoundException) {
                     withUIContext { addTextToClipboard(link, true) }
                 }
@@ -577,7 +633,7 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
             onClick = {
                 launchIO {
                     when {
-                        galleryDetail.torrentCount <= 0 -> showSnackbar(noTorrents)
+                        galleryDetail.torrentCount <= 0 -> snackbar(noTorrents)
                         else -> runSwallowingWithUI { showTorrentDialog() }
                     }
                 }
@@ -585,9 +641,9 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
         )
     }
     Spacer(modifier = Modifier.size(keylineMargin))
-    fun getAllRatingText(rating: Float, ratingCount: Int): String = getString(
+    fun getAllRatingText(rating: Float, ratingCount: Int): String = string(
         R.string.rating_text,
-        getString(getRatingText(rating)),
+        string(getRatingText(rating)),
         rating,
         ratingCount,
     )
@@ -600,7 +656,7 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
     fun showRateDialog() {
         launchIO {
             if (galleryDetail.apiUid < 0) {
-                showSnackbar(signInFirst)
+                snackbar(signInFirst)
                 return@launchIO
             }
             val pendingRating = awaitResult(galleryDetail.rating.coerceAtLeast(.5f), title = R.string.rate) {
@@ -625,10 +681,10 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
                     ratingCount = result.ratingCount
                 }
                 ratingText = getAllRatingText(result.rating, result.ratingCount)
-                showSnackbar(rateSucceed)
+                snackbar(rateSucceed)
             }.onFailure {
                 logcat(it)
-                showSnackbar(rateFailed)
+                snackbar(rateFailed)
             }
         }
     }
@@ -659,39 +715,41 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
         val filterAdded = stringResource(R.string.filter_added)
         val upTag = stringResource(R.string.tag_vote_up)
         val downTag = stringResource(R.string.tag_vote_down)
+        val withDraw = stringResource(R.string.tag_vote_withdraw)
         GalleryTags(
             tagGroups = tags,
             onTagClick = {
                 navigate(ListUrlBuilder(mode = ListUrlBuilder.MODE_TAG, mKeyword = it).asDst())
             },
-            onTagLongClick = { translated, tag ->
-                val index = tag.indexOf(':')
-                val temp = if (index >= 0) {
-                    tag.substring(index + 1)
-                } else {
-                    tag
-                }
+            onTagLongClick = { tag, translation, vote ->
+                val rawValue = tag.substringAfter(':')
                 launchIO {
                     awaitSelectAction {
                         onSelect(copy) {
                             addTextToClipboard(tag)
                         }
-                        if (temp != translated) {
+                        if (rawValue != translation) {
                             onSelect(copyTrans) {
-                                addTextToClipboard(translated)
+                                addTextToClipboard(translation)
                             }
                         }
                         onSelect(showDefine) {
-                            openBrowser(EhUrl.getTagDefinitionUrl(temp))
+                            openBrowser(EhUrl.getTagDefinitionUrl(rawValue))
                         }
                         onSelect(addFilter) {
                             awaitConfirmationOrCancel { Text(text = stringResource(R.string.filter_the_tag, tag)) }
                             Filter(FilterMode.TAG, tag).remember()
-                            showSnackbar(filterAdded)
+                            snackbar(filterAdded)
                         }
                         if (galleryDetail.apiUid >= 0) {
-                            onSelect(upTag) { galleryDetail.voteTag(tag, 1) }
-                            onSelect(downTag) { galleryDetail.voteTag(tag, -1) }
+                            when (vote) {
+                                VoteStatus.None -> {
+                                    onSelect(upTag) { galleryDetail.voteTag(tag, 1) }
+                                    onSelect(downTag) { galleryDetail.voteTag(tag, -1) }
+                                }
+                                VoteStatus.Up -> onSelect(withDraw) { galleryDetail.voteTag(tag, -1) }
+                                VoteStatus.Down -> onSelect(withDraw) { galleryDetail.voteTag(tag, 1) }
+                            }
                         }
                     }()
                 }
@@ -707,7 +765,6 @@ fun BelowHeader(galleryDetail: GalleryDetail) {
 
 @StringRes
 private fun getRatingText(rating: Float): Int = when ((rating * 2).roundToInt()) {
-    0 -> R.string.rating0
     1 -> R.string.rating1
     2 -> R.string.rating2
     3 -> R.string.rating3
@@ -721,27 +778,18 @@ private fun getRatingText(rating: Float): Int = when ((rating * 2).roundToInt())
     else -> R.string.rating_none
 }
 
-private fun List<GalleryTagGroup>.getArtistTag(): String? {
-    for (tagGroup in this) {
-        val namespace = tagGroup.nameSpace
-        if (namespace == TagNamespace.Artist || namespace == TagNamespace.Cosplayer) {
-            return "$namespace:${tagGroup.tags[0].removePrefix("_")}"
-        }
-    }
-    return null
-}
+private fun List<GalleryTagGroup>.artistTag() = find { (ns, _) -> ns == TagNamespace.Artist || ns == TagNamespace.Cosplayer }?.let { (ns, tags) -> "$ns:${tags[0].text}" }
 
-context(Context)
+context(_: Context)
 @Composable
-private fun GalleryDetail?.collectPreviewItems(prefetchDistance: Int) = rememberInVM(this) {
-    val detail = this@collectPreviewItems ?: return@rememberInVM emptyFlow()
-    val pageSize = detail.previewList.size
-    val pages = detail.pages
-    val previewPagesMap = detail.previewList.associateBy { it.position } as MutableMap
+private fun GalleryDetail.collectPreviewItems() = rememberInVM(previewList) {
+    val pageSize = previewList.size
+    val pages = pages
+    val previewPagesMap = previewList.associateBy { it.position } as MutableMap
     Pager(
         PagingConfig(
             pageSize = pageSize,
-            prefetchDistance = prefetchDistance,
+            prefetchDistance = pageSize.coerceAtMost(100),
             initialLoadSize = pageSize,
             jumpThreshold = 2 * pageSize,
         ),
@@ -752,15 +800,15 @@ private fun GalleryDetail?.collectPreviewItems(prefetchDistance: Int) = remember
                 val key = params.key ?: 0
                 val up = getOffset(params, key, pages)
                 val end = (up + getLimit(params, key) - 1).coerceAtMost(pages - 1)
-                detail.runSuspendCatching {
+                runSuspendCatching {
                     (up..end).filterNot { it in previewPagesMap }.map { it / pageSize }.toSet()
                         .parMap(concurrency = Settings.multiThreadDownload) { page ->
                             val url = EhUrl.getGalleryDetailUrl(gid, token, page, false)
-                            EhEngine.getPreviewList(url).first
+                            EhEngine.getPreviewList(url).previews
                         }.flattenForEach {
                             previewPagesMap[it.position] = it
                             if (Settings.preloadThumbAggressively) {
-                                imageRequest(it) { justDownload() }.launchIn(viewModelScope)
+                                imageRequest(it) { justDownload() }.executeIn(viewModelScope)
                             }
                         }
                 }.foldToLoadResult {
@@ -775,7 +823,9 @@ private fun GalleryDetail?.collectPreviewItems(prefetchDistance: Int) = remember
     }.flow.cachedIn(viewModelScope)
 }.collectAsLazyPagingItems()
 
-private fun LazyGridScope.galleryPreview(data: LazyPagingItems<GalleryPreview>, onClick: (Int) -> Unit) {
+context(ctx: Context)
+private fun LazyGridScope.galleryPreview(detail: GalleryDetail, data: LazyPagingItems<GalleryPreview>, onClick: (Int) -> Unit) {
+    val isV2Thumb = detail.previewList.first() is V2GalleryPreview
     items(
         count = data.itemCount,
         key = data.itemKey(key = { item -> item.position }),
@@ -783,5 +833,6 @@ private fun LazyGridScope.galleryPreview(data: LazyPagingItems<GalleryPreview>, 
     ) { index ->
         val item = data[index]
         EhPreviewItem(item, index) { onClick(index) }
+        PrefetchAround(data, index, if (isV2Thumb) 20 else 6) { imageRequest(it) }
     }
 }

@@ -28,7 +28,6 @@ import com.hippo.ehviewer.client.EhUtils.getSuitableTitle
 import com.hippo.ehviewer.client.data.GalleryDetail
 import com.hippo.ehviewer.client.data.GalleryInfo
 import com.hippo.ehviewer.client.ehRequest
-import com.hippo.ehviewer.client.executeSafely
 import com.hippo.ehviewer.client.getImageKey
 import com.hippo.ehviewer.coil.read
 import com.hippo.ehviewer.coil.suspendEdit
@@ -39,6 +38,7 @@ import com.hippo.ehviewer.download.tempDownloadDir
 import com.hippo.ehviewer.image.PathSource
 import com.hippo.ehviewer.jni.archiveFdBatch
 import com.hippo.ehviewer.util.FileUtils
+import com.hippo.ehviewer.util.copyTo
 import com.hippo.ehviewer.util.sendTo
 import com.hippo.ehviewer.util.sha1
 import com.hippo.files.delete
@@ -49,15 +49,10 @@ import com.hippo.files.list
 import com.hippo.files.mkdirs
 import com.hippo.files.moveTo
 import com.hippo.files.openFileDescriptor
-import com.hippo.files.openOutputStream
 import eu.kanade.tachiyomi.util.system.logcat
-import io.ktor.client.plugins.onDownload
-import io.ktor.client.plugins.timeout
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.request
-import io.ktor.http.isSuccess
-import io.ktor.utils.io.copyTo
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
@@ -72,7 +67,6 @@ class SpiderDen(val info: GalleryInfo) {
     private var tempDownloadDir: Path? = null
     private val saveAsCbz = Settings.saveAsCbz
     private val archiveName = "$gid.cbz"
-    private val downloadTimeout = Settings.downloadTimeout * 1000L
 
     private val lock = ReentrantReadWriteLock()
 
@@ -170,22 +164,12 @@ class SpiderDen(val info: GalleryInfo) {
         url: String,
         referer: String?,
         notifyProgress: (Long, Long, Int) -> Unit,
-    ) = ehRequest(url, referer) {
-        var prev = 0L
-        onDownload { done, total ->
-            notifyProgress(total!!, done, (done - prev).toInt())
-            prev = done
-        }
-        timeout {
-            requestTimeoutMillis = downloadTimeout
-        }
-    }.executeSafely {
-        if (it.status.isSuccess()) {
-            saveFromHttpResponse(index, it)
-        } else {
-            false
-        }
-    }
+    ) = timeoutBySpeed(
+        url,
+        { ehRequest(url, referer, builder = it) },
+        notifyProgress,
+        { resp -> check(saveFromHttpResponse(index, resp)) },
+    )
 
     private suspend inline fun saveResponseMeta(
         index: Int,
@@ -198,7 +182,7 @@ class SpiderDen(val info: GalleryInfo) {
             val file = resolve(tempFile.name.removeSuffix(TEMP_SUFFIX))
             file.delete()
             lock.write { fileCache.remove(file.name) }
-            tempFile.moveTo(file)
+            tempFile moveTo file
             lock.write {
                 fileCache.remove(tempFile.name)
                 fileCache[file.name] = file
@@ -221,9 +205,7 @@ class SpiderDen(val info: GalleryInfo) {
         val url = response.request.url.toString()
         val extension = MimeTypeMap.getFileExtensionFromUrl(url).ifEmpty { "jpg" }
         return saveResponseMeta(index, extension) { outFile ->
-            outFile.openOutputStream().use {
-                response.bodyAsChannel().copyTo(it.channel)
-            }
+            response.bodyAsChannel().copyTo(outFile)
             FileHashRegex.find(url)?.let {
                 val expected = it.groupValues[1]
                 val actual = outFile.sha1()
@@ -264,7 +246,7 @@ class SpiderDen(val info: GalleryInfo) {
             ?: findImageFile(index)?.name.let { FileUtils.getExtensionFromFilename(it) }
     }
 
-    fun getImageSource(index: Int): PathSource? {
+    fun getImageSource(index: Int): PathSource {
         if (mode == SpiderQueen.MODE_READ) {
             val key = getImageKey(gid, index)
             val snapshot = sCache.openSnapshot(key)
@@ -277,14 +259,14 @@ class SpiderDen(val info: GalleryInfo) {
                 }
             }
         }
-        val source = findImageFile(index) ?: return null
+        val source = requireNotNull(findImageFile(index)) { "Source $index not found!" }
         return object : PathSource {
             override val source = source
             override val type by lazy {
                 FileUtils.getExtensionFromFilename(source.name)!!
             }
 
-            override fun close() {}
+            override fun close() = Unit
         }
     }
 
@@ -333,7 +315,7 @@ class SpiderDen(val info: GalleryInfo) {
         }
         val pages = info.pages
         val (fdBatch, names) = (0 until pages).parMap { idx ->
-            val f = autoCloseable { getImageSource(idx) ?: throw CancellationException("Image #$idx not found") }
+            val f = autoCloseable { getImageSource(idx) }
             closeable { f.source.openFileDescriptor("r") }.fd to perFilename(idx, f.type)
         }.run { plus(comicInfo.fd to COMIC_INFO_FILE) }.unzip()
         val arcFd = closeable { file.openFileDescriptor("rw") }
@@ -352,19 +334,15 @@ class SpiderDen(val info: GalleryInfo) {
     suspend fun writeComicInfo(fetchMetadata: Boolean = true) {
         downloadDir?.run {
             resolve(COMIC_INFO_FILE).also {
-                runCatching {
-                    if (info !is GalleryDetail && fetchMetadata) {
-                        EhEngine.fillGalleryListByApi(listOf(info))
+                if (info !is GalleryDetail && fetchMetadata) {
+                    EhEngine.fillGalleryListByApi(listOf(info))
+                }
+                info.getComicInfo().apply {
+                    writeComicInfo(this, it)
+                    DownloadManager.getDownloadInfo(gid)?.let { downloadInfo ->
+                        downloadInfo.artistInfoList = DownloadArtist.from(gid, penciller.orEmpty())
+                        EhDB.putDownloadArtist(gid, downloadInfo.artistInfoList)
                     }
-                    info.getComicInfo().apply {
-                        write(it)
-                        DownloadManager.getDownloadInfo(gid)?.let { downloadInfo ->
-                            downloadInfo.artistInfoList = DownloadArtist.from(gid, penciller.orEmpty())
-                            EhDB.putDownloadArtist(gid, downloadInfo.artistInfoList)
-                        }
-                    }
-                }.onFailure {
-                    logcat(it)
                 }
             }
         }

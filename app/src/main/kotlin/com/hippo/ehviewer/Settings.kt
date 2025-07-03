@@ -9,8 +9,6 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
-import com.hippo.ehviewer.client.CHROME_MOBILE_USER_AGENT
-import com.hippo.ehviewer.client.CHROME_USER_AGENT
 import com.hippo.ehviewer.client.EhCookieStore
 import com.hippo.ehviewer.client.data.FavListUrlBuilder
 import com.hippo.ehviewer.download.DownloadsFilterMode
@@ -109,6 +107,7 @@ object Settings : DataStorePreferences(null) {
     var favCloudCount by intPref("fav_cloud", 0).emitTo(_favFlow)
 
     val gallerySite = intPref("gallery_site_2", 0).observed { updateWhenGallerySiteChanges() }
+    val launchPage = intPref("launch_page_2", 0)
     val listMode = intPref("list_mode_2", 0)
     val detailSize = intPref("detail_size_2", 0)
     val thumbColumns = intPref("thumb_columns", 3)
@@ -116,9 +115,6 @@ object Settings : DataStorePreferences(null) {
     val languageFilter = intPref("language_filter", -1)
     val downloadSortMode = intPref("download_sort_mode", SortMode.Default.flag)
     val downloadFilterMode = intPref("download_filter_mode", DownloadsFilterMode.Default.flag)
-
-    // Enabled by default as some ExHentai thumbnail servers do not support HTTP/2
-    val forceEhThumb = boolPref("force_eh_thumb", true)
     val hasSignedIn = boolPref("has_signed_in", EhCookieStore.hasSignedIn())
     val needSignIn = boolPref("need_sign_in", true)
     val meteredNetworkWarning = boolPref("cellular_network_warning", false)
@@ -127,10 +123,15 @@ object Settings : DataStorePreferences(null) {
     val showGalleryPages = boolPref("show_gallery_pages", true)
     val qSSaveProgress = boolPref("qs_save_progress", true)
     val security = boolPref("require_unlock", false)
+    val saveCrashLog = boolPref("save_crash_log", true)
     val animateItems = boolPref("animate_items", true)
+    val enableCronet = boolPref("enable_cronet", true)
+    val enableQuic = boolPref("enable_quic", true)
+    val desktopSite = boolPref("desktop_site", true)
     val displayName = stringOrNullPref("display_name", null)
     val avatar = stringOrNullPref("avatar", null)
     val recentDownloadLabel = stringOrNullPref("recent_download_label", null)
+    val showVoteStatus = boolPref("show_vote_status", false)
 
     var downloadScheme by stringOrNullPref("image_scheme", null)
     var downloadAuthority by stringOrNullPref("image_authority", null)
@@ -141,11 +142,11 @@ object Settings : DataStorePreferences(null) {
     var downloadDelay by intPref("download_delay_3", 1000)
     var multiThreadDownload by intPref("download_thread_2", 3)
     var preloadImage by intPref("preload_image_2", 5)
-    var downloadTimeout by intPref("download_timeout", 60)
+    var connTimeout by intPref("conn_timeout", 10)
+    var timeoutSpeed by intPref("timeout_speed_level", 6)
     var theme by intPref("theme_2", -1).observed { updateWhenThemeChanges() }
     var readCacheSize by intPref("read_cache_size_2", 640)
-    var launchPage by intPref("launch_page_2", 0)
-    var commentThreshold by intPref("comment_threshold", -101)
+    var commentThreshold by intPref("comment_threshold", -100)
     var hardwareBitmapThreshold by intPref("hardware_bitmap_threshold", 16384)
     var showComments by boolPref("show_gallery_comments", true)
     var requestNews by boolPref("request_news", false).observed { updateWhenRequestNewsChanges() }
@@ -159,15 +160,12 @@ object Settings : DataStorePreferences(null) {
     var mediaScan by boolPref("media_scan", false).observed { updateWhenKeepMediaStatusChanges() }
     var hasDefaultDownloadLabel by boolPref("has_default_download_label", false)
     var saveParseErrorBody by boolPref("save_parse_error_body", true)
-    var saveCrashLog by boolPref("save_crash_log", true)
     var removeImageFiles by boolPref("include_pic", true)
     var harmonizeCategoryColor by boolPref("harmonize_category_color", true)
     var preloadThumbAggressively by boolPref("preload_thumb_aggressively", false)
     var downloadOriginImage by boolPref("download_origin_image", false)
     var saveAsCbz by boolPref("save_as_cbz", false)
     var archiveMetadata by boolPref("archive_metadata", true)
-    var enableCronet by boolPref("enable_cronet", true)
-    var desktopSite by boolPref("desktop_site", false)
     var recentFavCat by intPref("recent_fav_cat", FavListUrlBuilder.FAV_CAT_LOCAL)
     var defaultFavSlot by intPref("default_favorite_slot", -2)
     var securityDelay by intPref("require_unlock_delay", 0)
@@ -197,6 +195,7 @@ object Settings : DataStorePreferences(null) {
     val keepScreenOn = boolPref("pref_keep_screen_on_key", true)
     val readerLongTapAction = boolPref("reader_long_tap", true)
     val pageTransitions = boolPref("pref_enable_transitions_key", true)
+    val readerReverseControls = boolPref("reader_volume_keys_inverted", false)
     val grayScale = boolPref("pref_grayscale", false)
     val invertedColors = boolPref("pref_inverted_colors", false)
     val readerWebtoonNav = intPref("reader_navigation_mode_webtoon", 0)
@@ -211,9 +210,6 @@ object Settings : DataStorePreferences(null) {
     val showNavigationOverlayNewUser = boolPref("reader_navigation_overlay_new_user", true)
     val showNavigationOverlayOnStart = boolPref("reader_navigation_overlay_on_start", false)
     val stripExtraneousAds = boolPref("strip_extraneous_ads", false)
-
-    val userAgent
-        get() = if (desktopSite) CHROME_USER_AGENT else CHROME_MOBILE_USER_AGENT
 
     init {
         if ("CN" == Locale.getDefault().country) {
