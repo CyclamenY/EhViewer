@@ -4,6 +4,9 @@ import androidx.collection.SieveCache
 import androidx.collection.mutableIntObjectMapOf
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.bracketCase
+import com.ehviewer.core.model.GalleryInfo
+import com.ehviewer.core.util.isAtLeastO
+import com.ehviewer.core.util.withNonCancellableContext
 import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.image.Image
@@ -12,8 +15,6 @@ import com.hippo.ehviewer.util.FileUtils
 import com.hippo.ehviewer.util.OSUtils
 import com.hippo.ehviewer.util.detectAds
 import com.hippo.ehviewer.util.displayString
-import com.hippo.ehviewer.util.isAtLeastO
-import eu.kanade.tachiyomi.util.lang.withNonCancellableContext
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.read
@@ -35,7 +36,7 @@ private val progressScope = CoroutineScope(Dispatchers.IO)
 private const val MAX_CACHE_SIZE = 512 * 1024 * 1024
 private const val MIN_CACHE_SIZE = 256 * 1024 * 1024
 
-abstract class PageLoader(val scope: CoroutineScope, val gid: Long, startPage: Int, val size: Int, val hasAds: Boolean = false) : AutoCloseable {
+abstract class PageLoader(val scope: CoroutineScope, val info: GalleryInfo?, startPage: Int, val size: Int, val hasAds: Boolean = false) : AutoCloseable {
     var startPage = startPage.coerceIn(0, size - 1)
 
     private val jobs = mutableIntObjectMapOf<Job>()
@@ -68,7 +69,7 @@ abstract class PageLoader(val scope: CoroutineScope, val gid: Long, startPage: I
 
     val pages = (0 until size).map { Page(it) }
 
-    private val prefetchPageCount = Settings.preloadImage
+    private val prefetchPageCount = Settings.preloadImage.value
 
     fun restart() {
         lock.write { cache.evictAll() }
@@ -111,14 +112,14 @@ abstract class PageLoader(val scope: CoroutineScope, val gid: Long, startPage: I
 
     override fun close() {
         lock.write { cache.evictAll() }
-        if (gid != 0L) {
+        info?.run {
             progressScope.launch {
                 EhDB.putReadProgress(gid, startPage)
             }
         }
     }
 
-    protected abstract val title: String
+    abstract val title: String
 
     protected abstract fun getImageExtension(index: Int): String?
 

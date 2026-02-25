@@ -21,15 +21,22 @@ import arrow.core.partially2
 import arrow.core.right
 import arrow.fx.coroutines.parMap
 import arrow.fx.coroutines.parZip
+import com.ehviewer.core.i18n.R
+import com.ehviewer.core.model.BaseGalleryInfo
+import com.ehviewer.core.model.GalleryInfo
+import com.ehviewer.core.network.EhCookieStore
+import com.ehviewer.core.util.logcat
 import com.hippo.ehviewer.EhDB
-import com.hippo.ehviewer.R
 import com.hippo.ehviewer.Settings
-import com.hippo.ehviewer.client.data.BaseGalleryInfo
 import com.hippo.ehviewer.client.data.FavListUrlBuilder
-import com.hippo.ehviewer.client.data.GalleryInfo
+import com.hippo.ehviewer.client.data.fillInfo
+import com.hippo.ehviewer.client.data.filterComments
 import com.hippo.ehviewer.client.exception.CloudflareBypassException
+import com.hippo.ehviewer.client.exception.EhError
 import com.hippo.ehviewer.client.exception.EhException
 import com.hippo.ehviewer.client.exception.InsufficientFundsException
+import com.hippo.ehviewer.client.exception.InsufficientGpException
+import com.hippo.ehviewer.client.exception.IpBannedException
 import com.hippo.ehviewer.client.exception.NoHathClientException
 import com.hippo.ehviewer.client.exception.NoHitsFoundException
 import com.hippo.ehviewer.client.exception.NotLoggedInException
@@ -41,6 +48,7 @@ import com.hippo.ehviewer.client.parser.FavoritesParser
 import com.hippo.ehviewer.client.parser.GalleryApiParser
 import com.hippo.ehviewer.client.parser.GalleryDetailParser
 import com.hippo.ehviewer.client.parser.GalleryListParser
+import com.hippo.ehviewer.client.parser.GalleryMultiPageViewerPTokenParser
 import com.hippo.ehviewer.client.parser.GalleryPageParser
 import com.hippo.ehviewer.client.parser.GalleryTokenApiParser
 import com.hippo.ehviewer.client.parser.HomeParser
@@ -58,10 +66,12 @@ import com.hippo.ehviewer.util.AppConfig
 import com.hippo.ehviewer.util.ReadableTime
 import com.hippo.ehviewer.util.bodyAsUtf8Text
 import com.hippo.ehviewer.util.ensureSuccess
-import eu.kanade.tachiyomi.util.system.logcat
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.HttpStatement
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.request
+import io.ktor.http.Url
+import io.ktor.util.moveToByteArray
 import io.ktor.utils.io.pool.DirectByteBufferPool
 import io.ktor.utils.io.pool.useInstance
 import io.ktor.utils.io.readAvailable
@@ -72,6 +82,8 @@ import kotlin.system.measureTimeMillis
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.cbor.Cbor
+import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonArray
 import kotlinx.serialization.json.put
@@ -86,7 +98,9 @@ private const val MAX_REQUEST_SIZE = 25
 private const val MAX_SEQUENTIAL_REQUESTS = 5
 private const val REQUEST_INTERVAL = 5000L
 
-fun Either<String, ByteBuffer>.saveParseError(e: Throwable) {
+private val Url.isLogin get() = segments.firstOrNull() == "bounce_login.php"
+
+private fun Either<String, ByteBuffer>.saveParseError(e: Throwable) {
     val dir = AppConfig.externalParseErrorDir ?: return
     val file = File(dir, ReadableTime.getFilenamableTime() + ".txt")
     file.sink().buffer().use { sink ->
@@ -98,7 +112,7 @@ fun Either<String, ByteBuffer>.saveParseError(e: Throwable) {
     }
 }
 
-fun rethrowExactly(response: HttpResponse, body: Either<String, ByteBuffer>, e: Throwable): Nothing {
+private fun rethrowExactly(response: HttpResponse, body: Either<String, ByteBuffer>, e: Throwable): Nothing {
     // Don't translate coroutine cancellation
     if (e is CancellationException) throw e
 
@@ -110,37 +124,41 @@ fun rethrowExactly(response: HttpResponse, body: Either<String, ByteBuffer>, e: 
         { !it.hasRemaining() },
     )
     if (empty) {
-        if (EhUtils.isExHentai) {
-            throw EhException("Sad Panda\n(without panda)")
+        val message = if (response.request.url.host == EhUrl.DOMAIN_EX) {
+            "Sad Panda\n(without panda)"
         } else {
-            throw EhException("IP banned")
+            appCtx.getString(R.string.error_ip_banned)
         }
+        throw IpBannedException(message)
     }
 
-    // Check Gallery Not Available
-    body.onLeft {
-        if ("Gallery Not Available - " in it) throw e
-    }
+    // Parse error from rust
+    val error = body.getOrNull()?.runCatching {
+        val array = moveToByteArray()
+        rewind()
+        Cbor.decodeFromByteArray<EhError>(array)
+    }?.getOrNull()
 
-    // Check parse error thrown by rust
-    val cause = e.cause
-    if (e is ParseException && cause is RuntimeException) {
-        when (val message = cause.message) {
-            "0" -> throw NoHitsFoundException()
-            "1" -> throw EhException(R.string.gallery_list_empty_hit_subscription)
-            "2" -> throw NotLoggedInException()
-            "3" -> throw NoHathClientException()
-            "4" -> throw InsufficientFundsException()
-            is String if message.startsWith('5') -> throw EhException(message.drop(1))
-        }
-    }
+    // Check Gallery Not Available - 404
+    if (error is EhError.GalleryUnavailable) throw EhException(error.message)
 
     // Check bad response code
     response.status.ensureSuccess()
 
+    when (error) {
+        EhError.NoHits -> throw NoHitsFoundException()
+        EhError.NoWatched -> throw EhException(R.string.gallery_list_empty_hit_subscription)
+        EhError.NeedLogin -> throw NotLoggedInException()
+        EhError.NoHathClient -> throw NoHathClientException()
+        EhError.InsufficientFunds -> throw InsufficientFundsException()
+        is EhError.IpBanned -> throw IpBannedException(error.message)
+        is EhError.Error -> throw EhException(error.message)
+        else -> Unit
+    }
+
     if (e is ParseException || e is SerializationException) {
-        body.onLeft { if ("<" !in it) throw EhException(it) }
-        if (Settings.saveParseErrorBody) body.saveParseError(e)
+        body.onLeft { if ("<" !in it) throw IpBannedException(it) }
+        if (Settings.saveParseErrorBody.value) body.saveParseError(e)
         throw EhException(appCtx.getString(R.string.error_parse_error), e)
     }
 
@@ -148,9 +166,10 @@ fun rethrowExactly(response: HttpResponse, body: Either<String, ByteBuffer>, e: 
     throw e
 }
 
-val httpContentPool = DirectByteBufferPool(8, 0x80000)
+private val httpContentPool = DirectByteBufferPool(8, 0x80000)
 
-suspend inline fun <T> HttpStatement.fetchUsingAsText(crossinline block: suspend String.() -> T) = executeSafely { response ->
+private suspend inline fun <T> HttpStatement.fetchUsingAsText(crossinline block: suspend String.() -> T) = executeSafely { response ->
+    if (response.request.url.isLogin) throw NotLoggedInException()
     val body = response.bodyAsUtf8Text()
     runSuspendCatching {
         block(body)
@@ -159,7 +178,8 @@ suspend inline fun <T> HttpStatement.fetchUsingAsText(crossinline block: suspend
     }.getOrThrow()
 }
 
-suspend inline fun <T> HttpStatement.fetchUsingAsByteBuffer(crossinline block: suspend ByteBuffer.() -> T) = executeSafely { response ->
+private suspend inline fun <T> HttpStatement.fetchUsingAsByteBuffer(crossinline block: suspend ByteBuffer.() -> T) = executeSafely { response ->
+    if (response.request.url.isLogin) throw NotLoggedInException()
     httpContentPool.useInstance { buffer ->
         with(response.bodyAsChannel()) { while (!isClosedForRead) readAvailable(buffer) }
         buffer.flip()
@@ -174,9 +194,11 @@ suspend inline fun <T> HttpStatement.fetchUsingAsByteBuffer(crossinline block: s
 
 object EhEngine {
     suspend fun getOriginalImageUrl(url: String, referer: String?) = noRedirectEhRequest(url, referer).executeSafely { response ->
-        val location = response.headers["Location"] ?: throw InsufficientFundsException()
-        location.takeIf { "bounce_login" !in it } ?: throw NotLoggedInException()
+        response.headers["Location"]?.takeUnless { Url(it).isLogin } ?: throw InsufficientGpException()
     }
+
+    suspend fun getPTokenListFromMpv(gid: Long, token: String) = ehRequest(EhUrl.getGalleryMultiPageViewerUrl(gid, token), EhUrl.referer)
+        .fetchUsingAsText(GalleryMultiPageViewerPTokenParser::parse)
 
     suspend fun getTorrentList(gid: Long, token: String): TorrentResult {
         val url = EhUrl.getTorrentUrl(gid, token)
@@ -212,7 +234,8 @@ object EhEngine {
         return ehRequest(url, EhUrl.URL_FORUMS).fetchUsingAsByteBuffer(ProfileParser::parse)
     }
 
-    suspend fun getUConfig(url: String = EhUrl.uConfigUrl) {
+    suspend fun getUConfig(gallerySite: Int) {
+        val url = EhUrl.getUConfigUrl(gallerySite)
         runSuspendCatching {
             ehRequest(url).fetchUsingAsByteBuffer(UserConfigParser::parse)
         }.onFailure { throwable ->

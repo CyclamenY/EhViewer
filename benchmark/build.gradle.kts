@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.test)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.baselineprofile)
 }
 
@@ -23,6 +22,7 @@ android {
         create("pixel6Api35") {
             device = "Pixel 6"
             apiLevel = 35
+            testedAbi = "x86_64"
             systemImageSource = "aosp-atd"
         }
     }

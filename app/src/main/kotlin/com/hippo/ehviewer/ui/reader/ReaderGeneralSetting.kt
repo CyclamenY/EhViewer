@@ -9,19 +9,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.integerArrayResource
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
-import com.hippo.ehviewer.R
+import com.ehviewer.core.i18n.R
+import com.ehviewer.core.util.isAtLeastP
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.asMutableState
-import com.hippo.ehviewer.util.isAtLeastP
 
 @Composable
 fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
     SpinnerChoice(
         title = stringResource(id = R.string.pref_reader_theme),
-        entries = stringArrayResource(id = R.array.reader_themes),
-        values = stringArrayResource(id = R.array.reader_themes_values),
+        entries = stringArrayResource(id = com.hippo.ehviewer.R.array.reader_themes),
+        values = integerArrayResource(id = com.hippo.ehviewer.R.array.reader_themes_values).toList(),
         field = Settings.readerTheme.asMutableState(),
     )
     SwitchChoice(
@@ -63,8 +64,15 @@ fun ReaderGeneralSetting() = Column(modifier = Modifier.verticalScroll(rememberS
         title = stringResource(id = R.string.pref_page_transitions),
         field = Settings.pageTransitions.asMutableState(),
     )
+    val volume = Settings.readWithVolumeKeys.asMutableState()
     SwitchChoice(
-        title = stringResource(id = R.string.settings_read_reverse_controls),
-        field = Settings.readerReverseControls.asMutableState(),
+        title = stringResource(id = R.string.settings_read_volume_page),
+        field = volume,
     )
+    AnimatedVisibility(visible = volume.value) {
+        SwitchChoice(
+            title = stringResource(id = R.string.settings_read_reverse_volume),
+            field = Settings.readWithVolumeKeysInverted.asMutableState(),
+        )
+    }
 }

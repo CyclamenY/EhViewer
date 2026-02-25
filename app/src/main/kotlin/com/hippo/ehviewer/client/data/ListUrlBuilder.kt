@@ -15,28 +15,27 @@
  */
 package com.hippo.ehviewer.client.data
 
+import com.ehviewer.core.database.model.QuickSearch
+import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.client.EhUrl
 import com.hippo.ehviewer.client.EhUtils
 import com.hippo.ehviewer.client.addQueryParameter
 import com.hippo.ehviewer.client.addQueryParameterIfNotBlank
 import com.hippo.ehviewer.client.ehUrl
-import com.hippo.ehviewer.dao.QuickSearch
 import com.hippo.ehviewer.ui.main.AdvanceTable
 import io.ktor.http.Parameters
-import kotlin.text.toIntOrNull
 import kotlinx.serialization.Serializable
 
 @Serializable
 data class ListUrlBuilder(
     var mode: Int = MODE_NORMAL,
     private var prev: String? = null,
-    var next: String? = null,
-    // Reset to null after initial loading
-    var jumpTo: String? = null,
+    private var next: String? = null,
+    private var jumpTo: String? = null,
     private var range: Int = 0,
     var category: Int = EhUtils.NONE,
-    private var mKeyword: String? = null,
+    var keyword: String? = null,
     var hash: String? = null,
     var language: Int = -1,
     var advanceSearch: Int = -1,
@@ -49,11 +48,14 @@ data class ListUrlBuilder(
         next = index.takeIf { isNext }
         prev = index.takeUnless { isNext }
         range = 0
+        jumpTo = null
     }
 
-    fun setJumpTo(to: Int) {
-        jumpTo = to.takeUnless { it == 0 }?.toString()
-    }
+    var page: Int
+        get() = (jumpTo?.toInt() ?: 0) + 1
+        set(value) {
+            jumpTo = (value - 1).takeUnless { it == 0 }?.toString()
+        }
 
     fun setRange(to: Int) {
         range = to
@@ -62,16 +64,15 @@ data class ListUrlBuilder(
         jumpTo = null
     }
 
-    var keyword: String?
-        get() = if (MODE_UPLOADER == mode) "uploader:$mKeyword" else mKeyword
-        set(keyword) {
-            mKeyword = keyword
-        }
+    fun setSeek(date: String) {
+        setIndex("2", true)
+        jumpTo = date
+    }
 
     constructor(q: QuickSearch) : this(
         mode = q.mode,
         category = q.category,
-        mKeyword = q.keyword,
+        keyword = q.keyword,
         advanceSearch = q.advanceSearch,
         minRating = q.minRating,
         pageFrom = q.pageFrom,
@@ -83,7 +84,7 @@ data class ListUrlBuilder(
         name = name,
         mode = mode,
         category = category,
-        keyword = mKeyword,
+        keyword = keyword,
         advanceSearch = advanceSearch,
         minRating = minRating,
         pageFrom = pageFrom,
@@ -100,7 +101,7 @@ data class ListUrlBuilder(
         if (q.category != this.category) {
             return false
         }
-        if (q.keyword != mKeyword) {
+        if (q.keyword != keyword) {
             return false
         }
         if (q.advanceSearch != advanceSearch) {
@@ -122,7 +123,7 @@ data class ListUrlBuilder(
         jumpTo = params["seek"],
         range = params["range"]?.toIntOrNull() ?: 0,
         category = params["f_cats"]?.toIntOrNull()?.let(EhUtils::invCategory) ?: EhUtils.NONE,
-        mKeyword = params["f_search"],
+        keyword = params["f_search"],
     ) {
         if (params["advsearch"] == "1") {
             advanceSearch = 0
@@ -153,7 +154,7 @@ data class ListUrlBuilder(
             if (category > 0) {
                 addQueryParameter("f_cats", "${EhUtils.invCategory(category)}")
             }
-            val query = mKeyword?.let { keyword ->
+            val query = keyword?.let { keyword ->
                 if (language == -1 || "gid:" in keyword || "l:" in keyword || "language:" in keyword) {
                     keyword
                 } else {
@@ -205,26 +206,23 @@ data class ListUrlBuilder(
                 }
             }
         }.buildString()
-
         MODE_UPLOADER, MODE_TAG -> {
             val path = if (mode == MODE_UPLOADER) "uploader" else "tag"
-            ehUrl(listOf(path, requireNotNull(mKeyword))) {
+            ehUrl(listOf(path, requireNotNull(keyword))) {
                 addQueryParameterIfNotBlank("prev", prev)
                 addQueryParameterIfNotBlank("next", next)
                 addQueryParameterIfNotBlank("seek", jumpTo)
                 addQueryParameterIfNotBlank("range", range.takeIf { it > 0 }?.toString())
             }.buildString()
         }
-
         MODE_WHATS_HOT -> EhUrl.popularUrl
         MODE_IMAGE_SEARCH -> ehUrl {
             addQueryParameter("f_shash", requireNotNull(hash))
         }.buildString()
         MODE_TOPLIST -> ehUrl("toplist.php", EhUrl.DOMAIN_E) {
-            addQueryParameter("tl", requireNotNull(mKeyword))
+            addQueryParameter("tl", requireNotNull(keyword))
             addQueryParameterIfNotBlank("p", jumpTo)
         }.buildString()
-
         else -> throw IllegalStateException("Unexpected value: $mode")
     }
 

@@ -20,16 +20,21 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.os.Environment
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.Stable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.net.toUri
 import arrow.core.memoize
+import com.ehviewer.core.model.GalleryDetail
+import com.ehviewer.core.model.GalleryInfo
+import com.ehviewer.core.network.EhCookieStore
+import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.Settings
-import com.hippo.ehviewer.client.data.GalleryDetail
-import com.hippo.ehviewer.client.data.GalleryInfo
 import com.hippo.ehviewer.client.parser.Archive
 import com.hippo.ehviewer.spider.SpiderDen
 import com.hippo.ehviewer.util.AppConfig
@@ -38,7 +43,7 @@ import com.hippo.ehviewer.util.addTextToClipboard
 import com.materialkolor.hct.Hct
 import com.materialkolor.ktx.from
 import com.materialkolor.ktx.toColor
-import eu.kanade.tachiyomi.util.lang.withUIContext
+import com.materialkolor.utils.ColorUtils.lstarFromArgb
 import splitties.systemservices.downloadManager
 
 object EhUtils {
@@ -143,7 +148,7 @@ object EhUtils {
                 else -> BG_COLOR_UNKNOWN
             }.toInt(),
         )
-        return if (Settings.harmonizeCategoryColor) {
+        return if (Settings.harmonizeCategoryColor.value) {
             val primaryContainer = MaterialTheme.colorScheme.primaryContainer
             mergeColor(primaryContainer, primary)
         } else {
@@ -151,7 +156,13 @@ object EhUtils {
         }
     }
 
-    val categoryTextColor = Color(0xffe6e0e9)
+    @ReadOnlyComposable
+    @Composable
+    fun getCategoryTextColor(color: Color) = if (isSystemInDarkTheme() == lstarFromArgb(color.toArgb()) > 70) {
+        MaterialTheme.colorScheme.surface
+    } else {
+        LocalContentColor.current
+    }
 
     val favoriteIconColor = Color(0xffff3040)
 
@@ -163,7 +174,7 @@ object EhUtils {
         Settings.needSignIn.value = true
     }
 
-    fun getSuitableTitle(gi: GalleryInfo): String = if (Settings.showJpnTitle) {
+    fun getSuitableTitle(gi: GalleryInfo): String = if (Settings.showJpnTitle.value) {
         if (gi.titleJpn.isNullOrEmpty()) gi.title else gi.titleJpn
     } else {
         if (gi.title.isNullOrEmpty()) gi.titleJpn else gi.title
@@ -201,7 +212,7 @@ object EhUtils {
                 r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 downloadManager.enqueue(r)
             }
-            if (Settings.archiveMetadata) {
+            if (Settings.archiveMetadata.value) {
                 SpiderDen(galleryDetail).apply {
                     initDownloadDir()
                     writeComicInfo()

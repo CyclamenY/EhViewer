@@ -29,8 +29,8 @@ use tl::{ParserOptions, VDom};
 
 #[jni_fn("com.hippo.ehviewer.client.parser.FavoritesParserKt")]
 pub fn parseFav(mut env: JNIEnv, _class: JClass, input: JByteBuffer, limit: jint) -> jint {
-    parse_marshal_inplace(&mut env, input, limit, |dom, html| {
-        parse_fav(dom, dom.parser(), html)
+    parse_marshal_inplace(&mut env, input, limit, |dom, _| {
+        parse_fav(dom, dom.parser())
     })
 }
 
@@ -43,8 +43,8 @@ pub fn parseLimit(mut env: JNIEnv, _class: JClass, input: JByteBuffer, limit: ji
 
 #[jni_fn("com.hippo.ehviewer.client.parser.GalleryListParserKt")]
 pub fn parseGalleryInfoList(mut env: JNIEnv, _: JClass, buffer: JByteBuffer, limit: jint) -> jint {
-    parse_marshal_inplace(&mut env, buffer, limit, |dom, str| {
-        parse_info_list(dom, dom.parser(), str)
+    parse_marshal_inplace(&mut env, buffer, limit, |dom, _| {
+        parse_info_list(dom, dom.parser())
     })
 }
 
@@ -245,7 +245,7 @@ where
 {
     parse_raw_marshal_inplace(env, str, limit, |html| {
         let mut dom = tl::parse(html, options)?;
-        ensure!(dom.version().is_some(), EhError::Error(html.to_string()));
+        ensure!(dom.version().is_some(), EhError::IpBanned(html.to_string()));
         f(&mut dom, html)
     })
 }
@@ -256,16 +256,28 @@ where
     R: Serialize,
 {
     jni_throwing(env, |env| {
+        ensure!(limit > 0, "Empty response");
         let buffer = deref_mut_direct_bytebuffer(env, str)?;
-        let value = {
-            // SAFETY: ktor client ensure html content is valid utf-8.
-            let body = unsafe { from_utf8_unchecked(&buffer[..limit as usize]) };
-            f(body)?
-        };
-        let mut cursor = Cursor::new(buffer);
-        serde_cbor::to_writer(&mut cursor, &value)?;
-        Ok(cursor.position() as i32)
+
+        // SAFETY: ktor client ensure html content is valid utf-8.
+        let body = unsafe { from_utf8_unchecked(&buffer[..limit as usize]) };
+        match f(body) {
+            Ok(value) => serialize_to_buffer(buffer, &value),
+            Err(err) => {
+                if let Some(value) = err.downcast_ref::<EhError>() {
+                    serialize_to_buffer(buffer, value)
+                } else {
+                    Err(err)
+                }
+            }
+        }
     })
+}
+
+fn serialize_to_buffer<T: Serialize>(buffer: &mut [u8], value: &T) -> Result<i32> {
+    let mut cursor = Cursor::new(buffer);
+    serde_cbor::to_writer(&mut cursor, value)?;
+    Ok(cursor.position() as i32)
 }
 
 #[unsafe(no_mangle)]

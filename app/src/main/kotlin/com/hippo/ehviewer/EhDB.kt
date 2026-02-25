@@ -15,28 +15,31 @@
  */
 package com.hippo.ehviewer
 
-import android.content.Context
-import android.net.Uri
+import androidx.room.execSQL
+import androidx.room.useWriterConnection
 import arrow.fx.coroutines.resource
 import arrow.fx.coroutines.resourceScope
-import com.hippo.ehviewer.client.data.BaseGalleryInfo
-import com.hippo.ehviewer.dao.DownloadArtist
-import com.hippo.ehviewer.dao.DownloadDirname
-import com.hippo.ehviewer.dao.DownloadInfo
-import com.hippo.ehviewer.dao.DownloadLabel
-import com.hippo.ehviewer.dao.EhDatabase
-import com.hippo.ehviewer.dao.Filter
-import com.hippo.ehviewer.dao.HistoryInfo
-import com.hippo.ehviewer.dao.LocalFavoriteInfo
-import com.hippo.ehviewer.dao.ProgressInfo
-import com.hippo.ehviewer.dao.QuickSearch
-import com.hippo.ehviewer.dao.Schema17to18
+import com.ehviewer.core.data.model.asEntity
+import com.ehviewer.core.database.EhDatabase
+import com.ehviewer.core.database.Schema17to18
+import com.ehviewer.core.database.getDatabasePath
+import com.ehviewer.core.database.model.DownloadArtist
+import com.ehviewer.core.database.model.DownloadDirname
+import com.ehviewer.core.database.model.DownloadInfo
+import com.ehviewer.core.database.model.DownloadLabel
+import com.ehviewer.core.database.model.Filter
+import com.ehviewer.core.database.model.GalleryEntity
+import com.ehviewer.core.database.model.HistoryInfo
+import com.ehviewer.core.database.model.LocalFavoriteInfo
+import com.ehviewer.core.database.model.ProgressInfo
+import com.ehviewer.core.database.model.QuickSearch
+import com.ehviewer.core.database.roomDb
+import com.ehviewer.core.files.delete
+import com.ehviewer.core.files.sendTo
+import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.download.DownloadManager
-import com.hippo.ehviewer.util.sendTo
 import kotlinx.coroutines.flow.Flow
 import okio.Path
-import okio.Path.Companion.toOkioPath
-import splitties.arch.room.roomDb
 
 object EhDB {
     private const val DB_NAME = "eh.db"
@@ -44,15 +47,15 @@ object EhDB {
         addMigrations(Schema17to18())
     }
 
-    suspend fun putGalleryInfo(galleryInfo: BaseGalleryInfo) {
+    suspend fun putGalleryInfo(galleryInfo: GalleryEntity) {
         db.galleryDao().upsert(galleryInfo)
     }
 
-    private suspend fun deleteGalleryInfo(galleryInfo: BaseGalleryInfo) {
+    private suspend fun deleteGalleryInfo(galleryInfo: GalleryEntity) {
         runCatching { db.galleryDao().delete(galleryInfo) }
     }
 
-    suspend fun updateGalleryInfo(galleryInfoList: List<BaseGalleryInfo>) {
+    suspend fun updateGalleryInfo(galleryInfoList: List<GalleryEntity>) {
         db.galleryDao().update(galleryInfoList)
     }
 
@@ -146,6 +149,8 @@ object EhDB {
         dao.fill(raw.position)
     }
 
+    suspend fun searchDownloadLabel(keyword: String, limit: Int) = db.downloadLabelDao().search("%$keyword%", limit)
+
     suspend fun putDownloadArtist(gid: Long, artists: List<DownloadArtist>) {
         if (artists.isNotEmpty()) {
             val dao = db.downloadArtistDao()
@@ -154,12 +159,12 @@ object EhDB {
         }
     }
 
-    suspend fun removeLocalFavorites(galleryInfo: BaseGalleryInfo) {
+    suspend fun removeLocalFavorites(galleryInfo: GalleryInfo) {
         db.localFavoritesDao().deleteByKey(galleryInfo.gid)
-        deleteGalleryInfo(galleryInfo)
+        deleteGalleryInfo(galleryInfo.asEntity())
     }
 
-    suspend fun removeLocalFavorites(galleryInfoList: Collection<BaseGalleryInfo>) {
+    suspend fun removeLocalFavorites(galleryInfoList: Collection<GalleryInfo>) {
         galleryInfoList.forEach {
             removeLocalFavorites(it)
         }
@@ -170,12 +175,12 @@ object EhDB {
         return dao.contains(gid)
     }
 
-    suspend fun putLocalFavorites(galleryInfo: BaseGalleryInfo) {
-        putGalleryInfo(galleryInfo)
+    suspend fun putLocalFavorites(galleryInfo: GalleryInfo) {
+        putGalleryInfo(galleryInfo.asEntity())
         db.localFavoritesDao().upsert(LocalFavoriteInfo(galleryInfo.gid))
     }
 
-    suspend fun putLocalFavorites(galleryInfoList: Collection<BaseGalleryInfo>) {
+    suspend fun putLocalFavorites(galleryInfoList: Collection<GalleryInfo>) {
         galleryInfoList.forEach {
             putLocalFavorites(it)
         }
@@ -221,8 +226,8 @@ object EhDB {
 
     fun searchLocalFav(keyword: String) = db.localFavoritesDao().joinListLazy("*$keyword*")
 
-    suspend fun putHistoryInfo(galleryInfo: BaseGalleryInfo) {
-        putGalleryInfo(galleryInfo)
+    suspend fun putHistoryInfo(galleryInfo: GalleryInfo) {
+        putGalleryInfo(galleryInfo.asEntity())
         db.historyDao().upsert(HistoryInfo(galleryInfo.gid))
     }
 
@@ -239,7 +244,7 @@ object EhDB {
         dao.insertOrIgnore(historyInfoList)
     }
 
-    suspend fun deleteHistoryInfo(galleryInfo: BaseGalleryInfo) {
+    suspend fun deleteHistoryInfo(galleryInfo: GalleryEntity) {
         val dao = db.historyDao()
         dao.deleteByKey(galleryInfo.gid)
         deleteGalleryInfo(galleryInfo)
@@ -273,23 +278,26 @@ object EhDB {
         db.filterDao().update(filter)
     }
 
-    fun exportDB(context: Context, file: Path) {
-        db.query("PRAGMA wal_checkpoint(FULL)", null).use { it.moveToNext() }
-        val dbFile = context.getDatabasePath(DB_NAME)
-        dbFile.toOkioPath() sendTo file
+    suspend fun exportDB(file: Path) {
+        db.useWriterConnection { conn ->
+            conn.execSQL("PRAGMA wal_checkpoint(FULL)")
+            conn.execSQL("VACUUM")
+        }
+        val dbFile = getDatabasePath(DB_NAME)
+        dbFile sendTo file
     }
 
-    suspend fun importDB(context: Context, uri: Uri) = resourceScope {
+    suspend fun importDB(file: Path) = resourceScope {
         val tempDBName = "tmp.db"
+        val dbFile = getDatabasePath(tempDBName)
+        file sendTo dbFile
         val oldDB = resource {
-            context.deleteDatabase(tempDBName)
             roomDb<EhDatabase>(tempDBName) {
-                createFromInputStream { context.contentResolver.openInputStream(uri) }
                 addMigrations(Schema17to18())
             }
         } release { db ->
             db.close()
-            context.deleteDatabase(tempDBName)
+            dbFile.delete()
         }
 
         db.galleryDao().insertOrIgnore(oldDB.galleryDao().list())

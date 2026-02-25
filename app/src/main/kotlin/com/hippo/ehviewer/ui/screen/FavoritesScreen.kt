@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.FolderSpecial
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -52,42 +53,42 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.paging.compose.collectAsLazyPagingItems
+import com.ehviewer.core.i18n.R
+import com.ehviewer.core.model.BaseGalleryInfo
+import com.ehviewer.core.ui.component.FAB_ANIMATE_TIME
+import com.ehviewer.core.ui.component.FabLayout
+import com.ehviewer.core.ui.component.LocalSideSheetState
+import com.ehviewer.core.ui.component.ProvideSideSheetContent
+import com.ehviewer.core.ui.icons.EhIcons
+import com.ehviewer.core.ui.icons.filled.GoTo
+import com.ehviewer.core.ui.util.asyncState
+import com.ehviewer.core.ui.util.takeAndClear
+import com.ehviewer.core.ui.util.thenIf
+import com.ehviewer.core.util.launch
+import com.ehviewer.core.util.mapToLongArray
+import com.ehviewer.core.util.onEachLatest
+import com.ehviewer.core.util.withUIContext
 import com.hippo.ehviewer.EhDB
-import com.hippo.ehviewer.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.client.EhEngine
-import com.hippo.ehviewer.client.data.BaseGalleryInfo
 import com.hippo.ehviewer.client.data.FavListUrlBuilder
 import com.hippo.ehviewer.collectAsState
-import com.hippo.ehviewer.icons.EhIcons
-import com.hippo.ehviewer.icons.filled.GoTo
 import com.hippo.ehviewer.ui.DrawerHandle
-import com.hippo.ehviewer.ui.LocalSideSheetState
-import com.hippo.ehviewer.ui.ProvideSideSheetContent
 import com.hippo.ehviewer.ui.Screen
 import com.hippo.ehviewer.ui.awaitSelectDate
 import com.hippo.ehviewer.ui.main.AvatarIcon
-import com.hippo.ehviewer.ui.main.FAB_ANIMATE_TIME
-import com.hippo.ehviewer.ui.main.FabLayout
 import com.hippo.ehviewer.ui.main.GalleryInfoGridItem
 import com.hippo.ehviewer.ui.main.GalleryInfoListItem
 import com.hippo.ehviewer.ui.main.GalleryList
 import com.hippo.ehviewer.ui.startDownload
-import com.hippo.ehviewer.ui.tools.asyncState
 import com.hippo.ehviewer.ui.tools.awaitConfirmationOrCancel
 import com.hippo.ehviewer.ui.tools.awaitSelectItem
-import com.hippo.ehviewer.ui.tools.thenIf
-import com.hippo.ehviewer.util.mapToLongArray
-import com.hippo.ehviewer.util.takeAndClear
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
-import eu.kanade.tachiyomi.util.lang.withUIContext
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
-import moe.tarsin.coroutines.onEachLatest
 import moe.tarsin.coroutines.runSwallowingWithUI
-import moe.tarsin.launch
 import moe.tarsin.navigate
 
 @Destination<RootGraph>
@@ -103,6 +104,8 @@ fun AnimatedVisibilityScope.FavouritesScreen(navigator: DestinationsNavigator, v
     var urlBuilder by viewModel.urlBuilder
     var searchBarExpanded by rememberSaveable { mutableStateOf(false) }
     var searchBarOffsetY by remember { mutableIntStateOf(0) }
+    var fabExpanded by remember { mutableStateOf(false) }
+    var fabHidden by remember { mutableStateOf(false) }
 
     // Derived State
     val keyword = urlBuilder.keyword
@@ -162,6 +165,7 @@ fun AnimatedVisibilityScope.FavouritesScreen(navigator: DestinationsNavigator, v
                         val newCat = index - 2
                         refresh(FavListUrlBuilder(newCat))
                         Settings.recentFavCat = newCat
+                        fabHidden = false
                         launch { sheetState.close() }
                     },
                     colors = listItemOnDrawerColor(urlBuilder.favCat == index - 2),
@@ -170,8 +174,6 @@ fun AnimatedVisibilityScope.FavouritesScreen(navigator: DestinationsNavigator, v
         }
     }
 
-    var fabExpanded by remember { mutableStateOf(false) }
-    var fabHidden by remember { mutableStateOf(false) }
     val checkedInfoMap = remember { mutableStateMapOf<Long, BaseGalleryInfo>() }
     val selectMode = checkedInfoMap.isNotEmpty()
     DrawerHandle(!selectMode && !searchBarExpanded)
@@ -186,11 +188,11 @@ fun AnimatedVisibilityScope.FavouritesScreen(navigator: DestinationsNavigator, v
         },
         title = title,
         searchFieldHint = searchBarHint,
-        tagNamespace = !urlBuilder.isLocal,
+        localSearch = urlBuilder.isLocal,
         searchBarOffsetY = { searchBarOffsetY },
         trailingIcon = {
             val sheetState = LocalSideSheetState.current
-            IconButton(onClick = { launch { sheetState.open() } }) {
+            IconButton(onClick = { launch { sheetState.open() } }, shapes = IconButtonDefaults.shapes()) {
                 Icon(imageVector = Icons.Outlined.FolderSpecial, contentDescription = null)
             }
             AvatarIcon()
@@ -199,6 +201,7 @@ fun AnimatedVisibilityScope.FavouritesScreen(navigator: DestinationsNavigator, v
         val listMode by Settings.listMode.collectAsState()
         val height by collectListThumbSizeAsState()
         val showPages by Settings.showGalleryPages.collectAsState()
+        val showProgress by Settings.showReadingProgress.collectAsState()
         val searchBarConnection = remember {
             val slop = ViewConfiguration.get(contextOf<Context>()).scaledTouchSlop
             val topPaddingPx = with(density) { contentPadding.calculateTopPadding().roundToPx() }
@@ -243,6 +246,7 @@ fun AnimatedVisibilityScope.FavouritesScreen(navigator: DestinationsNavigator, v
                         },
                         info = info,
                         showPages = showPages,
+                        showProgress = showProgress,
                         modifier = Modifier.height(height),
                         isInFavScene = true,
                         interactionSource = interactionSource,
@@ -272,6 +276,7 @@ fun AnimatedVisibilityScope.FavouritesScreen(navigator: DestinationsNavigator, v
                         },
                         info = info,
                         showPages = showPages,
+                        showProgress = showProgress,
                         showFavoriteStatus = false,
                         interactionSource = interactionSource,
                     )
@@ -312,7 +317,7 @@ fun AnimatedVisibilityScope.FavouritesScreen(navigator: DestinationsNavigator, v
             }
             onClick(EhIcons.Default.GoTo) {
                 val date = awaitSelectDate()
-                refresh(urlBuilder.copy(jumpTo = date))
+                refresh(urlBuilder.copy(jumpTo = date, prev = null, next = "2"))
             }
             onClick(Icons.Default.Refresh) {
                 refresh()

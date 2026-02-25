@@ -39,7 +39,7 @@
         <activity
             android:name=".ui.MainActivity"
             android:banner="@mipmap/ic_leanback_banner"
-            android:configChanges="screenSize"
+            android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize"
             android:exported="true"
             android:launchMode="singleTask"
             android:theme="@style/AppTheme.Splash"
@@ -118,10 +118,6 @@
                 <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
-        <activity
-            android:name=".ui.SecurityActivity"
-            android:configChanges="screenSize"
-            android:label="@string/settings" />
         <activity
             android:name=".shortcuts.ShortcutsActivity"
             android:excludeFromRecents="true"

@@ -32,10 +32,15 @@ import coil3.request.CachePolicy
 import coil3.request.ErrorResult
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
-import coil3.size.Dimension
+import coil3.request.maxBitmapSize
 import coil3.size.Precision
+import coil3.size.Scale
 import coil3.size.Size
 import coil3.size.SizeResolver
+import com.ehviewer.core.files.openFileDescriptor
+import com.ehviewer.core.files.toUri
+import com.ehviewer.core.util.isAtLeastP
+import com.ehviewer.core.util.isAtLeastU
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.coil.AnimatedWebPDrawable
 import com.hippo.ehviewer.coil.BitmapImageWithExtraInfo
@@ -48,21 +53,17 @@ import com.hippo.ehviewer.jni.munmap
 import com.hippo.ehviewer.jni.rewriteGifSource
 import com.hippo.ehviewer.ktbuilder.execute
 import com.hippo.ehviewer.ktbuilder.imageRequest
-import com.hippo.ehviewer.util.isAtLeastP
-import com.hippo.ehviewer.util.isAtLeastU
-import com.hippo.ehviewer.util.updateAndGet
-import com.hippo.files.openFileDescriptor
-import com.hippo.files.toUri
 import java.nio.ByteBuffer
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.decrementAndFetch
+import kotlin.concurrent.atomics.updateAndFetch
 import okio.Path
 import splitties.init.appCtx
 
 class Image private constructor(image: CoilImage, private val src: ImageSource) {
     val refcnt = AtomicInt(1)
 
-    fun pin() = refcnt.updateAndGet { if (it != 0) it + 1 else 0 } != 0
+    fun pin() = refcnt.updateAndFetch { if (it != 0) it + 1 else 0 } != 0
 
     fun unpin() = (refcnt.decrementAndFetch() == 0).also { if (it) recycle() }
 
@@ -90,8 +91,10 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
     }
 
     companion object {
-        private val targetWidth = appCtx.resources.displayMetrics.widthPixels * 3
-        private val sizeResolver = SizeResolver(Size(targetWidth, Dimension.Undefined))
+        private val sizeResolver = with(appCtx.resources.displayMetrics) {
+            val targetSize = minOf(widthPixels, heightPixels) * 4 / 3
+            SizeResolver(Size(targetSize, targetSize))
+        }
 
         private suspend fun Either<ByteBufferSource, PathSource>.decodeCoil(checkExtraneousAds: Boolean): CoilImage {
             val request = with(appCtx) {
@@ -99,9 +102,11 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                     onLeft { data(it.source) }
                     onRight { data(it.source.toUri()) }
                     size(sizeResolver)
+                    scale(Scale.FILL)
                     precision(Precision.INEXACT)
+                    maxBitmapSize(Size.ORIGINAL)
                     allowHardware(false)
-                    hardwareThreshold(Settings.hardwareBitmapThreshold)
+                    hardwareThreshold(Settings.hardwareBitmapThreshold.value)
                     maybeCropBorder(Settings.cropBorder.value)
                     detectQrCode(checkExtraneousAds)
                     memoryCachePolicy(CachePolicy.DISABLED)
@@ -130,7 +135,6 @@ class Image private constructor(image: CoilImage, private val src: ImageSource) 
                     }
                     src.right().decodeCoil(checkExtraneousAds)
                 }
-
                 is ByteBufferSource -> {
                     if (isAtLeastP && !isAtLeastU) {
                         rewriteGifSource(src.source)

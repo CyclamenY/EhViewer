@@ -1,6 +1,11 @@
 package com.hippo.ehviewer.ui.reader
 
 import android.graphics.drawable.Animatable
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,8 +15,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -36,8 +44,10 @@ import coil3.DrawableImage
 import coil3.compose.AsyncImagePainter
 import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
+import com.ehviewer.core.i18n.R
+import com.ehviewer.core.ui.util.thenIf
+import com.ehviewer.core.util.unreachable
 import com.google.accompanist.drawablepainter.DrawablePainter
-import com.hippo.ehviewer.R
 import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.collectAsState
 import com.hippo.ehviewer.gallery.Page
@@ -46,12 +56,9 @@ import com.hippo.ehviewer.gallery.PageStatus
 import com.hippo.ehviewer.gallery.progressObserved
 import com.hippo.ehviewer.gallery.statusObserved
 import com.hippo.ehviewer.image.Image
-import com.hippo.ehviewer.ui.tools.thenIf
 import com.hippo.ehviewer.util.AdsPlaceholderFile
-import eu.kanade.tachiyomi.ui.reader.viewer.CombinedCircularProgressIndicator
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.drop
-import moe.tarsin.kt.unreachable
 
 @Composable
 fun PagerItem(
@@ -82,7 +89,22 @@ fun PagerItem(
                 modifier = modifier.fillMaxWidth().aspectRatio(DEFAULT_ASPECT),
                 contentAlignment = Alignment.Center,
             ) {
-                CombinedCircularProgressIndicator(progress = state.progressObserved)
+                AnimatedContent(
+                    targetState = state is PageStatus.Loading,
+                    transitionSpec = { fadeIn() togetherWith fadeOut() },
+                    label = "progressState",
+                ) { determinate ->
+                    val animatedProgress by animateFloatAsState(
+                        targetValue = state.progressObserved,
+                        animationSpec = WavyProgressIndicatorDefaults.ProgressAnimationSpec,
+                        label = "progress",
+                    )
+                    if (determinate) {
+                        CircularWavyProgressIndicator(progress = { animatedProgress })
+                    } else {
+                        CircularWavyProgressIndicator()
+                    }
+                }
             }
         }
         is PageStatus.Ready -> {
@@ -108,11 +130,11 @@ fun PagerItem(
                     // DrawablePainter <: RememberObserver
                     painter = remember(painter) { painter },
                     contentDescription = null,
-                    modifier = contentModifier.fillMaxSize().thenIf(drawable is Animatable) {
+                    modifier = Modifier.thenIf(drawable is Animatable) {
                         onVisibilityChanged(minDurationMs = 33, minFractionVisible = 0.5f) {
                             drawable!!.setVisible(it, false)
                         }
-                    },
+                    }.then(contentModifier).fillMaxSize(),
                     contentScale = contentScale,
                     colorFilter = when {
                         grayScale && invert -> grayScaleAndInvertFilter
@@ -141,7 +163,11 @@ fun PagerItem(
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    Button(onClick = { pageLoader.retryPage(page.index) }, modifier = Modifier.padding(8.dp)) {
+                    Button(
+                        onClick = { pageLoader.retryPage(page.index) },
+                        shapes = ButtonDefaults.shapes(),
+                        modifier = Modifier.padding(8.dp),
+                    ) {
                         Text(text = stringResource(id = R.string.action_retry))
                     }
                 }

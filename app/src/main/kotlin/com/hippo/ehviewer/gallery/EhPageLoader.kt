@@ -1,8 +1,8 @@
 package com.hippo.ehviewer.gallery
 
 import arrow.autoCloseScope
+import com.ehviewer.core.model.GalleryInfo
 import com.hippo.ehviewer.client.EhUtils
-import com.hippo.ehviewer.client.data.GalleryInfo
 import com.hippo.ehviewer.spider.SpiderQueen
 import com.hippo.ehviewer.spider.SpiderQueen.Companion.obtainSpiderQueen
 import com.hippo.ehviewer.spider.SpiderQueen.Companion.releaseSpiderQueen
@@ -24,7 +24,7 @@ suspend inline fun <T> useEhPageLoader(
         )
         queen.awaitReady()
         val loader = install(
-            object : PageLoader(this, info.gid, startPage, queen.size, info.hasAds) {
+            object : PageLoader(this, info, startPage, queen.size, info.hasAds) {
                 override val title by lazy { EhUtils.getSuitableTitle(info) }
 
                 override fun getImageExtension(index: Int) = queen.getExtension(index)
